@@ -13,8 +13,8 @@
   "use strict";
 
   // ── 改這兩個 ──────────────────────────────────────────────────
-  const BACKEND_URL = "http://localhost:8787"; // 本機測試用；部署後可換成 Render 網址
-  const COLLECT_SECRET = "79f9af591c561f25deaa57a10e16d007"; // 跟 .env 的 COLLECT_SECRET 要一致
+  const BACKEND_URL = "https://twitterlian-dong-dcshou-tu-bot.onrender.com";
+  const COLLECT_SECRET = "貼你 .env 裡的 COLLECT_SECRET"; // 只填在 Tampermonkey 裡實際安裝的那份，這個檔案（會進 git）留空白
   // ────────────────────────────────────────────────────────────
 
   let hashtagsCache = null; // 角色 → Hashtag 對照表，每次載入頁面拉一次就好
@@ -40,7 +40,7 @@
     const lower = text.toLowerCase();
     return Object.entries(tags)
       .filter(([name]) => !name.startsWith("_"))
-      .filter(([, list]) => list.some((h) => lower.includes("#" + h.toLowerCase())))
+      .filter(([, list]) => list.some((h) => lower.includes(h.toLowerCase())))
       .map(([name]) => name);
   }
 
