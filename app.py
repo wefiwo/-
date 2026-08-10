@@ -8,6 +8,7 @@ which this project won't do). Discord auto-embeds the tweet link itself, no down
 import json
 import os
 import random
+import re
 from pathlib import Path
 
 import requests
@@ -28,6 +29,8 @@ COLLECT_SECRET = os.environ["COLLECT_SECRET"]
 APP_ID = os.environ.get("DISCORD_APPLICATION_ID") or requests.get(
     f"{API_BASE}/oauth2/applications/@me", headers={"Authorization": f"Bot {BOT_TOKEN}"}
 ).json()["id"]
+
+TWEET_URL_RE = re.compile(r"^https://(?:x|twitter)\.com/([A-Za-z0-9_]{1,15})/status/(\d+)$")
 
 HASHTAGS_PATH = Path(__file__).parent / "hashtags.json"
 COLLECTED_PATH = Path(__file__).parent / "collected.json"
@@ -118,10 +121,11 @@ def collect():
         abort(401)
 
     body = request.get_json(force=True, silent=True) or {}
-    url, author = body.get("url"), body.get("author")
     text, media_type = body.get("text", ""), body.get("type")
-    if not url or not author or media_type not in ("photo", "video"):
-        abort(400)
+    m = TWEET_URL_RE.match(body.get("url", ""))
+    if not m or media_type not in ("photo", "video"):
+        abort(400)  # reject anything that isn't actually an x.com/twitter.com tweet link
+    url, author = m.group(0).replace("twitter.com", "x.com"), m.group(1)  # author from the URL itself, not client-claimed
 
     lower_text = text.lower()
     matched = [name for name, tags in HASHTAGS.items() if any(t.lower() in lower_text for t in tags)]
