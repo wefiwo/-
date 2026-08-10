@@ -50,27 +50,37 @@
     return null; // 純文字推文，不是我們要的
   }
 
-  // X 自動翻譯時，畫面上顯示的是譯文，hashtag 常常因此比對不到——先把「顯示原文」按掉再抓字。
+  // X 自動翻譯時，畫面上顯示的是譯文，hashtag 常常因此比對不到——先把「顯示原文」按掉抓字比對，
+  // 比對完再切回「顯示翻譯」，不影響你平常想看翻譯內文的習慣。
   // ponytail: 用按鈕文字做多語系比對，X 改版/換語言介面的話這裡可能要跟著調整。
   const SHOW_ORIGINAL_PHRASES = ["顯示原文", "显示原文", "Show original", "元のツイートを表示", "번역 전 표시", "원문 보기"];
+  const SHOW_TRANSLATION_PHRASES = ["顯示翻譯", "显示翻译", "Show translation", "翻訳を表示", "번역 보기"];
 
-  function findShowOriginalButton(article) {
+  function findButtonByPhrases(article, phrases) {
     for (const el of article.querySelectorAll('[role="button"]')) {
       const t = el.innerText?.trim();
-      if (t && SHOW_ORIGINAL_PHRASES.some((p) => t === p || t.includes(p))) return el;
+      if (t && phrases.some((p) => t === p || t.includes(p))) return el;
     }
     return null;
   }
 
   function readOriginalText(article, cb) {
-    const btn = findShowOriginalButton(article);
-    if (!btn) {
+    const showOriginalBtn = findButtonByPhrases(article, SHOW_ORIGINAL_PHRASES);
+    if (!showOriginalBtn) {
       cb(article.querySelector('[data-testid="tweetText"]')?.innerText || "");
       return;
     }
     console.log("[抓圖收藏] 偵測到翻譯，先切回原文");
-    btn.click();
-    setTimeout(() => cb(article.querySelector('[data-testid="tweetText"]')?.innerText || ""), 500);
+    showOriginalBtn.click();
+    setTimeout(() => {
+      const text = article.querySelector('[data-testid="tweetText"]')?.innerText || "";
+      const showTranslationBtn = findButtonByPhrases(article, SHOW_TRANSLATION_PHRASES);
+      if (showTranslationBtn) {
+        console.log("[抓圖收藏] 比對完成，切回翻譯顯示");
+        showTranslationBtn.click();
+      }
+      cb(text);
+    }, 500);
   }
 
   document.addEventListener(
