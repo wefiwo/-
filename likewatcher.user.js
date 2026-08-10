@@ -73,7 +73,10 @@
 
       loadHashtags((tags) => {
         const chars = matchedCharacters(text, tags);
-        if (chars.length === 0) return; // 文字裡沒對到任何角色 hashtag，不蒐集
+        if (chars.length === 0) {
+          console.log("[抓圖收藏] 沒對到任何角色關鍵字，略過", text);
+          return;
+        }
 
         GM_xmlhttpRequest({
           method: "POST",
