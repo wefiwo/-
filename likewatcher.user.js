@@ -50,6 +50,29 @@
     return null; // 純文字推文，不是我們要的
   }
 
+  // X 自動翻譯時，畫面上顯示的是譯文，hashtag 常常因此比對不到——先把「顯示原文」按掉再抓字。
+  // ponytail: 用按鈕文字做多語系比對，X 改版/換語言介面的話這裡可能要跟著調整。
+  const SHOW_ORIGINAL_PHRASES = ["顯示原文", "显示原文", "Show original", "元のツイートを表示", "번역 전 표시", "원문 보기"];
+
+  function findShowOriginalButton(article) {
+    for (const el of article.querySelectorAll('[role="button"]')) {
+      const t = el.innerText?.trim();
+      if (t && SHOW_ORIGINAL_PHRASES.some((p) => t === p || t.includes(p))) return el;
+    }
+    return null;
+  }
+
+  function readOriginalText(article, cb) {
+    const btn = findShowOriginalButton(article);
+    if (!btn) {
+      cb(article.querySelector('[data-testid="tweetText"]')?.innerText || "");
+      return;
+    }
+    console.log("[抓圖收藏] 偵測到翻譯，先切回原文");
+    btn.click();
+    setTimeout(() => cb(article.querySelector('[data-testid="tweetText"]')?.innerText || ""), 500);
+  }
+
   document.addEventListener(
     "click",
     (ev) => {
@@ -69,22 +92,23 @@
       if (!m) return;
       const [, author, id] = m;
       const url = `https://x.com/${author}/status/${id}`;
-      const text = article.querySelector('[data-testid="tweetText"]')?.innerText || "";
 
-      loadHashtags((tags) => {
-        const chars = matchedCharacters(text, tags);
-        if (chars.length === 0) {
-          console.log("[抓圖收藏] 沒對到任何角色關鍵字，略過", text);
-          return;
-        }
+      readOriginalText(article, (text) => {
+        loadHashtags((tags) => {
+          const chars = matchedCharacters(text, tags);
+          if (chars.length === 0) {
+            console.log("[抓圖收藏] 沒對到任何角色關鍵字，略過", text);
+            return;
+          }
 
-        GM_xmlhttpRequest({
-          method: "POST",
-          url: BACKEND_URL + "/collect",
-          headers: { "Content-Type": "application/json", "X-Collect-Secret": COLLECT_SECRET },
-          data: JSON.stringify({ url, author, text, type: mediaType }),
-          onload: (res) => console.log("[抓圖收藏]", chars, res.status, res.responseText),
-          onerror: (e) => console.error("[抓圖收藏] 送出失敗", e),
+          GM_xmlhttpRequest({
+            method: "POST",
+            url: BACKEND_URL + "/collect",
+            headers: { "Content-Type": "application/json", "X-Collect-Secret": COLLECT_SECRET },
+            data: JSON.stringify({ url, author, text, type: mediaType }),
+            onload: (res) => console.log("[抓圖收藏]", chars, res.status, res.responseText),
+            onerror: (e) => console.error("[抓圖收藏] 送出失敗", e),
+          });
         });
       });
     },
