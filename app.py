@@ -124,7 +124,7 @@ def collect():
         abort(400)
 
     lower_text = text.lower()
-    matched = [name for name, tags in HASHTAGS.items() if any(f"#{t.lower()}" in lower_text for t in tags)]
+    matched = [name for name, tags in HASHTAGS.items() if any(t.lower() in lower_text for t in tags)]
     if not matched:
         return jsonify({"added_to": []})
 
