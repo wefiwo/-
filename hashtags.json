@@ -1,6 +1,6 @@
 {
   "_format": "角色名稱: [Hashtag1, Hashtag2, ...]（不含 # 符號）。可自行新增角色，沒有數量上限。以 _ 開頭的 key 會被忽略，可當註解用。",
   "秧秧": ["YangyangXuanling"],
-  "鳴潮": ["Wuthering Waves", "めいちょう", "WuWaFanart", "WutheringWavescosplay"],
+  "鳴潮": ["Wuthering Waves", "WutheringWaves", "めいちょう", "WuWaFanart", "WutheringWavescosplay"],
   "漂泊者": ["漂泊者", "ひょうはくしゃ", "방랑자"]
 }
