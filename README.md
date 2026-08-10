@@ -137,7 +137,18 @@ waitress-serve --host=0.0.0.0 --port=$PORT app:app
 7. `likewatcher.user.js` 的 `BACKEND_URL` 改成 `https://xxx.onrender.com`。
 8. 本機 `.env` 把 `GUILD_ID` 那行刪掉（或整行拿掉不要留著），重跑一次 `python register_commands.py` 改回註冊全域指令，讓任何人裝了都能用（同步最多等 1 小時）。
 
-免費方案閒置一段時間會休眠，有人打 `/抓圖` 時第一次可能要多等幾秒它醒過來，之後就正常。**注意：Render 免費方案的檔案系統重啟後會重置**，也就是 `collected.json` 重新部署或休眠喚醒後可能會清空——量大了之後要留意，這是免費方案的限制，真的介意可以之後換成有持久化磁碟的方案，或把 `collected.json` 換成外部資料庫。
+免費方案閒置一段時間會休眠，有人打 `/抓圖` 時第一次可能要多等幾秒它醒過來，之後就正常。
+
+**⚠️ Render 免費方案的檔案系統不會保留**：每次重新部署、甚至每次從休眠喚醒，都是全新的容器，`collected.json` 這個本機檔案會被清空。閒置一段時間就用一次的 bot，等於幾乎每次都在重蒐集。要讓收藏真的留得住，接下方的 Upstash（免費）。
+
+### 讓收藏不會被清空：接 Upstash Redis（免費）
+
+1. 去 https://upstash.com 註冊，**Create Database**（不要用首頁那個 72 小時就過期的臨時資料庫），選免費方案。
+2. 建好後在資料庫頁面找到 **REST API** 區塊，複製 `UPSTASH_REDIS_REST_URL` 和 `UPSTASH_REDIS_REST_TOKEN` 兩個值。
+3. 貼進 Render 的 Environment 分頁（新增這兩個變數），存檔重新部署。
+4. 本機 `.env` 想順便測試的話也可以填一樣的值；不填的話本機照樣用本機檔案，互不影響。
+
+設定好這兩個變數後，`app.py` 會自動改用 Upstash 存 `collected.json` 的內容，不再受 Render 重啟影響。
 
 ## 運作流程備忘
 

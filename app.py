@@ -35,11 +35,22 @@ TWEET_URL_RE = re.compile(r"^https://(?:x|twitter)\.com/([A-Za-z0-9_]{1,15})/sta
 HASHTAGS_PATH = Path(__file__).parent / "hashtags.json"
 COLLECTED_PATH = Path(__file__).parent / "collected.json"
 
+# Optional: Upstash Redis free tier for persistence across Render free-tier restarts
+# (its local disk gets wiped on every redeploy/spin-down-then-wake). Falls back to the
+# local JSON file when these aren't set — fine for local dev, not for a free-tier deploy.
+UPSTASH_URL = os.environ.get("UPSTASH_REDIS_REST_URL", "").rstrip("/")
+UPSTASH_TOKEN = os.environ.get("UPSTASH_REDIS_REST_TOKEN", "")
+
 with open(HASHTAGS_PATH, encoding="utf-8") as f:
     HASHTAGS = {k: (v if isinstance(v, list) else [v]) for k, v in json.load(f).items() if not k.startswith("_")}
 
 
 def load_collected():
+    if UPSTASH_URL:
+        r = requests.get(f"{UPSTASH_URL}/get/collected", headers={"Authorization": f"Bearer {UPSTASH_TOKEN}"})
+        r.raise_for_status()
+        result = r.json().get("result")
+        return json.loads(result) if result else {}
     if not COLLECTED_PATH.exists():
         return {}
     with open(COLLECTED_PATH, encoding="utf-8") as f:
@@ -47,10 +58,15 @@ def load_collected():
 
 
 def save_collected(data):
-    # ponytail: read-modify-write, no file lock — fine for one person's browser posting
-    # occasionally; add a lock if this ever gets concurrent writers.
+    # ponytail: read-modify-write, no lock — fine for one person's browser posting
+    # occasionally; add one if this ever gets concurrent writers.
+    payload = json.dumps(data, ensure_ascii=False)
+    if UPSTASH_URL:
+        r = requests.post(f"{UPSTASH_URL}/set/collected", headers={"Authorization": f"Bearer {UPSTASH_TOKEN}"}, data=payload.encode())
+        r.raise_for_status()
+        return
     with open(COLLECTED_PATH, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+        f.write(payload)
 
 
 def fix_embed_url(url):
