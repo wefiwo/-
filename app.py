@@ -52,10 +52,11 @@ UPSTASH_TOKEN = os.environ.get("UPSTASH_REDIS_REST_TOKEN", "")
 with open(HASHTAGS_PATH, encoding="utf-8") as f:
     HASHTAGS = {k: (v if isinstance(v, list) else [v]) for k, v in json.load(f).items() if not k.startswith("_")}
 
-# 拼音查一次存起來，同音字（碎/歲/穗都唸 sui）autocomplete 才找得到，不用每次打字都重轉換。存成
-# 音節清單而不是直接拼接字串，比對時才不會把 jin 誤判成 jing 的前綴（兩個不同音節，拼起來字串上
-# 卻剛好一個是另一個的子字串）。
-HASHTAGS_PINYIN = {name: lazy_pinyin(name) for name in HASHTAGS}
+# 拼音查一次存起來，同音字（碎/歲/穗都唸 sui，聲調也一樣）autocomplete 才找得到，不用每次打字都重
+# 轉換。存成音節清單而不是直接拼接字串，比對時才不會把 jin 誤判成 jing 的前綴（兩個不同音節，拼起來
+# 字串上卻剛好一個是另一個的子字串）。帶聲調（Style.TONE）比對，同音不同調（金 jīn vs 瑾 jǐn）才不會
+# 互相誤判——純 ASCII 查詢（沒有調號可標）不受影響，一樣照原樣比對。
+HASHTAGS_PINYIN = {name: lazy_pinyin(name, style=Style.TONE) for name in HASHTAGS}
 
 
 def _contains_syllables(needle, haystack):
@@ -69,7 +70,7 @@ HASHTAGS_BOPOMOFO = {name: "".join(lazy_pinyin(name, style=Style.BOPOMOFO)).tran
 
 
 def autocomplete_matches(query):
-    query_syllables = lazy_pinyin(query) if query else []
+    query_syllables = lazy_pinyin(query, style=Style.TONE) if query else []
     query_bopomofo = query.translate(_BOPOMOFO_TONE_MARKS) if query else ""
     return [
         name for name in HASHTAGS

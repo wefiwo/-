@@ -26,9 +26,11 @@ class TestCollect(unittest.TestCase):
         self._real_hashtags_bopomofo = app_module.HASHTAGS_BOPOMOFO
         app_module.HASHTAGS = {
             "秧秧": ["YangyangXuanling"], "長離": ["Changli"],
-            "金城": ["Jincheng"], "景然": ["Jingran"],
+            "金城": ["Jincheng"], "景然": ["Jingran"], "瑾軒": ["Jinxuan"],
         }
-        app_module.HASHTAGS_PINYIN = {name: app_module.lazy_pinyin(name) for name in app_module.HASHTAGS}
+        app_module.HASHTAGS_PINYIN = {
+            name: app_module.lazy_pinyin(name, style=app_module.Style.TONE) for name in app_module.HASHTAGS
+        }
         app_module.HASHTAGS_BOPOMOFO = {
             name: "".join(app_module.lazy_pinyin(name, style=app_module.Style.BOPOMOFO)).translate(app_module._BOPOMOFO_TONE_MARKS)
             for name in app_module.HASHTAGS
@@ -113,6 +115,12 @@ class TestCollect(unittest.TestCase):
         # literal prefix of "jing" once pinyin syllables get concatenated without boundaries.
         self.assertIn("金城", app_module.autocomplete_matches("金"))
         self.assertNotIn("景然", app_module.autocomplete_matches("金"))
+
+    def test_autocomplete_matches_same_tone_only(self):
+        # 金 is jīn (1st tone); 瑾 is jǐn (3rd tone) — same toneless reading but a different tone,
+        # so it shouldn't count as a homophone match.
+        self.assertIn("金城", app_module.autocomplete_matches("金"))
+        self.assertNotIn("瑾軒", app_module.autocomplete_matches("金"))
 
     def test_autocomplete_matches_bopomofo(self):
         # Discord's autocomplete box sometimes can't reach a Zhuyin IME's candidate popup, so it
