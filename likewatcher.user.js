@@ -187,6 +187,11 @@
           return;
         }
 
+        // ponytail debug: 印出容器本身跟它裡面找到的 permalink 元素，用來排查選擇器對不對
+        console.log("[抓圖收藏][IG][debug] container =", container);
+        console.log("[抓圖收藏][IG][debug] container.querySelector(permalink) =", container.querySelector(PERMALINK_SELECTOR));
+        console.log("[抓圖收藏][IG][debug] container outerHTML(前300字) =", container.outerHTML?.slice(0, 300));
+
         const url = extractPermalink(container);
         const author = extractAuthor(container);
         const text = extractCaption(container);
