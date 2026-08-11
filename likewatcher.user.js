@@ -224,33 +224,37 @@
           console.log("[抓圖收藏][IG] 找不到貼文連結，略過（選擇器可能要調整）");
           return;
         }
-        let url, author;
-        if (m[1]) {
-          const type = m[1] === "reels" ? "reel" : m[1]; // 存成單數，跟後端 /collect 認得的格式一致，兩種網址其實通用
-          url = `https://www.instagram.com/${type}/${m[2]}/`;
-          author = extractAuthor(container);
-        } else {
-          url = `https://www.instagram.com/p/${m[4]}/`; // 統一存成正規的 /p/ 格式，跟帳號名脫鉤
-          author = m[3];
-        }
-        const text = extractCaption(container);
-        const mediaType = container.querySelector("video") ? "video" : "photo";
 
-        console.log("[抓圖收藏][IG] 偵測到讚", { url, author, mediaType, textPreview: text.slice(0, 30) });
+        // 內文（尤其 Reels 那種一進畫面就馬上按讚的情況）常常還沒渲染完成，等一下再抓比較準。
+        setTimeout(() => {
+          let url, author;
+          if (m[1]) {
+            const type = m[1] === "reels" ? "reel" : m[1]; // 存成單數，跟後端 /collect 認得的格式一致，兩種網址其實通用
+            url = `https://www.instagram.com/${type}/${m[2]}/`;
+            author = extractAuthor(container);
+          } else {
+            url = `https://www.instagram.com/p/${m[4]}/`; // 統一存成正規的 /p/ 格式，跟帳號名脫鉤
+            author = m[3];
+          }
+          const text = extractCaption(container);
+          const mediaType = container.querySelector("video") ? "video" : "photo";
 
-        if (!url || !author) {
-          console.log("[抓圖收藏][IG] 抓不到網址或帳號，略過（選擇器可能要調整）");
-          return;
-        }
+          console.log("[抓圖收藏][IG] 偵測到讚", { url, author, mediaType, textPreview: text.slice(0, 30) });
 
-        loadHashtags((tags) => {
-          const chars = matchedCharacters(text, tags);
-          if (chars.length === 0) {
-            console.log("[抓圖收藏][IG] 沒對到任何角色關鍵字，略過", text);
+          if (!url || !author) {
+            console.log("[抓圖收藏][IG] 抓不到網址或帳號，略過（選擇器可能要調整）");
             return;
           }
-          submitCollect("[抓圖收藏][IG]", { url, author, text, mediaType, chars });
-        });
+
+          loadHashtags((tags) => {
+            const chars = matchedCharacters(text, tags);
+            if (chars.length === 0) {
+              console.log("[抓圖收藏][IG] 沒對到任何角色關鍵字，略過", text);
+              return;
+            }
+            submitCollect("[抓圖收藏][IG]", { url, author, text, mediaType, chars });
+          });
+        }, 800);
       },
       true
     );
