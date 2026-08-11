@@ -83,6 +83,16 @@ def fix_embed_url(url):
     return url
 
 
+def build_link_lines(url):
+    # kkinstagram.com gives Discord's crawler the real media for a proper inline embed, but a
+    # human clicking the same link gets bounced to an unrelated third-party site — so for IG,
+    # hide that link behind neutral link text and put the real instagram.com link on its own
+    # line underneath for people to actually click.
+    if url.startswith("https://instagram.com/") or url.startswith("https://www.instagram.com/"):
+        return f"[嵌圖用 勿點]({fix_embed_url(url)})\n{url}"
+    return fix_embed_url(url)
+
+
 def verify(req):
     sig = req.headers.get("X-Signature-Ed25519", "")
     ts = req.headers.get("X-Signature-Timestamp", "")
@@ -127,7 +137,7 @@ def interactions():
             })
 
         entry = random.choice(pool)
-        content = f"**{character}** 的{media_type}\n{fix_embed_url(entry['url'])}"
+        content = f"**{character}** 的{media_type}\n{build_link_lines(entry['url'])}"
         return jsonify({"type": 4, "data": {"content": content}})
 
     return ("", 400)
