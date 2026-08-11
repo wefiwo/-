@@ -149,10 +149,17 @@
       return LIKE_LABELS.includes(svg.getAttribute("aria-label")) ? svg : null;
     }
 
+    // 真正的貼文代碼幾乎不會是純小寫英文單字（頁尾那些 /legal/privacy/、/about/jobs/ 之類的導覽連結才是），
+    // 混了大寫/數字/底線/連字號才像真的 shortcode，藉此把頁尾連結濾掉。
+    function looksLikeShortcode(s) {
+      return /[0-9A-Z_-]/.test(s);
+    }
+
     function findPostLink(root) {
       for (const a of root.querySelectorAll("a[href]")) {
         const m = a.href.match(POST_LINK_RE);
-        if (m) return m;
+        if (!m) continue;
+        if (m[1] || looksLikeShortcode(m[4])) return m;
       }
       return null;
     }
