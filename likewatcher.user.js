@@ -195,12 +195,24 @@
       return candidates[0] || null;
     }
 
-    // 一般貼文內文在 h1[dir="auto"]；Reels 版面沒有 h1，內文散落在好幾個 span[dir="auto"] 裡（還混著歌曲
-    // 資訊、選單文字等），全部串起來去比對就好，不用精準挑出哪一個才是「真正的內文」。
+    // 一般貼文內文在 h1[dir="auto"]；Reels 版面偶爾沒有 h1，內文散落在好幾個 span[dir="auto"] 裡（還混著
+    // 歌曲資訊、選單文字等），全部串起來去比對就好，不用精準挑出哪一個才是「真正的內文」。
     function extractCaption(container) {
       const h1 = container.querySelector('h1[dir="auto"]');
       if (h1?.innerText) return h1.innerText;
       return [...container.querySelectorAll('span[dir="auto"]')].map((el) => el.innerText).filter(Boolean).join(" ");
+    }
+
+    // Reels 的內文（h1）常常按讚當下還沒渲染完成，固定等一個時間長度賭不準——改成每 400ms 檢查一次，
+    // h1 一出現就馬上用，最多等 2.4 秒還沒出現就用當下抓得到的（span 那份退而求其次）。
+    function waitForCaption(container, cb, attemptsLeft) {
+      if (attemptsLeft === undefined) attemptsLeft = 6;
+      const h1 = container.querySelector('h1[dir="auto"]');
+      if (h1?.innerText || attemptsLeft <= 0) {
+        cb(extractCaption(container));
+        return;
+      }
+      setTimeout(() => waitForCaption(container, cb, attemptsLeft - 1), 400);
     }
 
     document.addEventListener(
@@ -225,8 +237,8 @@
           return;
         }
 
-        // 內文（尤其 Reels 那種一進畫面就馬上按讚的情況）常常還沒渲染完成，等一下再抓比較準。
-        setTimeout(() => {
+        // 內文（尤其 Reels 那種一進畫面就馬上按讚的情況）常常還沒渲染完成，等它出現再抓比較準。
+        waitForCaption(container, (text) => {
           let url, author;
           if (m[1]) {
             const type = m[1] === "reels" ? "reel" : m[1]; // 存成單數，跟後端 /collect 認得的格式一致，兩種網址其實通用
@@ -236,7 +248,6 @@
             url = `https://www.instagram.com/p/${m[4]}/`; // 統一存成正規的 /p/ 格式，跟帳號名脫鉤
             author = m[3];
           }
-          const text = extractCaption(container);
           const mediaType = container.querySelector("video") ? "video" : "photo";
 
           console.log("[抓圖收藏][IG] 偵測到讚", { url, author, mediaType, textPreview: text.slice(0, 30) });
@@ -254,7 +265,7 @@
             }
             submitCollect("[抓圖收藏][IG]", { url, author, text, mediaType, chars });
           });
-        }, 800);
+        });
       },
       true
     );
