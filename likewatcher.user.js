@@ -195,24 +195,26 @@
       return candidates[0] || null;
     }
 
-    // 一般貼文內文在 h1[dir="auto"]；Reels 版面偶爾沒有 h1，內文散落在好幾個 span[dir="auto"] 裡（還混著
-    // 歌曲資訊、選單文字等），全部串起來去比對就好，不用精準挑出哪一個才是「真正的內文」。
-    function extractCaption(container) {
-      const h1 = container.querySelector('h1[dir="auto"]');
-      if (h1?.innerText) return h1.innerText;
-      return [...container.querySelectorAll('span[dir="auto"]')].map((el) => el.innerText).filter(Boolean).join(" ");
+    // 滑動瀏覽 Reels 時，內文疊在影片上是包在「closed」模式的 Shadow DOM 裡，這種連程式都讀不到，
+    // 不是等久一點能解決的。改用背景請求打貼文自己的網址，讀伺服器回應 HTML 裡的 og:description
+    // 標籤——那裡面就有完整內文（含全部 hashtag），不受 Shadow DOM、渲染時機影響，一般貼文也適用。
+    function decodeHtmlEntities(str) {
+      const el = document.createElement("textarea");
+      el.innerHTML = str;
+      return el.value;
     }
 
-    // Reels 的內文（h1）常常按讚當下還沒渲染完成，固定等一個時間長度賭不準——改成每 400ms 檢查一次，
-    // h1 一出現就馬上用，最多等 2.4 秒還沒出現就用當下抓得到的（span 那份退而求其次）。
-    function waitForCaption(container, cb, attemptsLeft) {
-      if (attemptsLeft === undefined) attemptsLeft = 6;
-      const h1 = container.querySelector('h1[dir="auto"]');
-      if (h1?.innerText || attemptsLeft <= 0) {
-        cb(extractCaption(container));
-        return;
-      }
-      setTimeout(() => waitForCaption(container, cb, attemptsLeft - 1), 400);
+    function fetchCaption(url, cb) {
+      fetch(url, { credentials: "include" })
+        .then((r) => r.text())
+        .then((html) => {
+          const m = html.match(/<meta property="og:description" content="([^"]*)"/);
+          cb(m ? decodeHtmlEntities(m[1]) : "");
+        })
+        .catch((e) => {
+          console.error("[抓圖收藏][IG] 抓內文失敗", e);
+          cb("");
+        });
     }
 
     document.addEventListener(
@@ -237,25 +239,27 @@
           return;
         }
 
-        // 內文（尤其 Reels 那種一進畫面就馬上按讚的情況）常常還沒渲染完成，等它出現再抓比較準。
-        waitForCaption(container, (text) => {
-          let url, author;
-          if (m[1]) {
-            const type = m[1] === "reels" ? "reel" : m[1]; // 存成單數，跟後端 /collect 認得的格式一致，兩種網址其實通用
-            url = `https://www.instagram.com/${type}/${m[2]}/`;
-            author = extractAuthor(container);
-          } else {
-            url = `https://www.instagram.com/p/${m[4]}/`; // 統一存成正規的 /p/ 格式，跟帳號名脫鉤
-            author = m[3];
-          }
-          const mediaType = container.querySelector("video") ? "video" : "photo";
+        let url, author, isReel;
+        if (m[1]) {
+          const type = m[1] === "reels" ? "reel" : m[1]; // 存成單數，跟後端 /collect 認得的格式一致，兩種網址其實通用
+          url = `https://www.instagram.com/${type}/${m[2]}/`;
+          author = extractAuthor(container);
+          isReel = type === "reel";
+        } else {
+          url = `https://www.instagram.com/p/${m[4]}/`; // 統一存成正規的 /p/ 格式，跟帳號名脫鉤
+          author = m[3];
+          isReel = false;
+        }
+        // Reel 一定是影片，不用靠 DOM 判斷（滑動模式下 <video> 標籤也在同一個 Shadow DOM 裡找不到）。
+        const mediaType = isReel || container.querySelector("video") ? "video" : "photo";
 
+        if (!url || !author) {
+          console.log("[抓圖收藏][IG] 抓不到網址或帳號，略過（選擇器可能要調整）");
+          return;
+        }
+
+        fetchCaption(url, (text) => {
           console.log("[抓圖收藏][IG] 偵測到讚", { url, author, mediaType, textPreview: text.slice(0, 30) });
-
-          if (!url || !author) {
-            console.log("[抓圖收藏][IG] 抓不到網址或帳號，略過（選擇器可能要調整）");
-            return;
-          }
 
           loadHashtags((tags) => {
             const chars = matchedCharacters(text, tags);
