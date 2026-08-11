@@ -139,8 +139,9 @@
     // 比綁死特定 class 名稱穩（IG 的 class 是打包工具產生的亂碼，隨時會變）。
     // ponytail: 這段是照少量真實 DOM 樣本寫的，選擇器抓不到東西時看 console log 的訊息再調整。
     const LIKE_LABELS = ["讚", "Like", "like"];
-    const PERMALINK_SELECTOR = 'a[href*="/p/"], a[href*="/reel/"]';
     const RESERVED_PATHS = new Set(["p", "reel", "reels", "explore", "accounts", "stories", "direct", "tv", "about", "developer", ""]);
+    // IG 貼文連結有兩種格式都會遇到：/p/{code}/、/reel/{code}/，或直接 /帳號名/{code}/（後者連作者都內建在網址裡）。
+    const POST_LINK_RE = /^https:\/\/(?:www\.)?instagram\.com\/(?:(p|reel)\/([A-Za-z0-9_-]+)|([A-Za-z0-9_.]{1,30})\/([A-Za-z0-9_-]{5,30}))\/?(?:\?.*)?$/;
 
     function findLikeSvg(target) {
       const svg = target.closest("svg[aria-label]");
@@ -148,19 +149,20 @@
       return LIKE_LABELS.includes(svg.getAttribute("aria-label")) ? svg : null;
     }
 
-    function findPostContainer(el) {
-      let node = el.parentElement;
-      for (let i = 0; i < 25 && node; i++, node = node.parentElement) {
-        if (node.querySelector(PERMALINK_SELECTOR)) return node;
+    function findPostLink(root) {
+      for (const a of root.querySelectorAll("a[href]")) {
+        const m = a.href.match(POST_LINK_RE);
+        if (m) return m;
       }
       return null;
     }
 
-    function extractPermalink(container) {
-      const a = container.querySelector(PERMALINK_SELECTOR);
-      if (!a) return null;
-      const m = a.href.match(/^https:\/\/(?:www\.)?instagram\.com\/(p|reel)\/([A-Za-z0-9_-]+)/);
-      return m ? `https://www.instagram.com/${m[1]}/${m[2]}/` : null;
+    function findPostContainer(el) {
+      let node = el.parentElement;
+      for (let i = 0; i < 25 && node; i++, node = node.parentElement) {
+        if (findPostLink(node)) return node;
+      }
+      return null;
     }
 
     function extractAuthor(container) {
@@ -187,13 +189,15 @@
           return;
         }
 
-        // ponytail debug: 印出容器本身跟它裡面找到的 permalink 元素，用來排查選擇器對不對
-        console.log("[抓圖收藏][IG][debug] container =", container);
-        console.log("[抓圖收藏][IG][debug] container.querySelector(permalink) =", container.querySelector(PERMALINK_SELECTOR));
-        console.log("[抓圖收藏][IG][debug] container outerHTML(前300字) =", container.outerHTML?.slice(0, 300));
-
-        const url = extractPermalink(container);
-        const author = extractAuthor(container);
+        const m = findPostLink(container);
+        let url, author;
+        if (m[1]) {
+          url = `https://www.instagram.com/${m[1]}/${m[2]}/`;
+          author = extractAuthor(container);
+        } else {
+          url = `https://www.instagram.com/p/${m[4]}/`; // 統一存成正規的 /p/ 格式，跟帳號名脫鉤
+          author = m[3];
+        }
         const text = extractCaption(container);
         const mediaType = container.querySelector("video") ? "video" : "photo";
 
