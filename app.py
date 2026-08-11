@@ -73,13 +73,13 @@ def save_collected(data):
 
 
 def fix_embed_url(url):
-    # vxtwitter.com / ddinstagram.com are free public proxies that re-serve proper Open Graph
-    # tags so Discord actually embeds the image/video inline (the real domains don't unfurl
-    # reliably there).
+    # vxtwitter.com / kkinstagram.com are free public proxies that redirect straight to the
+    # real media file so Discord actually embeds the image/video inline (the real domains
+    # don't unfurl reliably there). kkinstagram picked over ddinstagram — the latter 403s now.
     if url.startswith("https://x.com/") or url.startswith("https://twitter.com/"):
         return url.replace("https://x.com/", "https://vxtwitter.com/").replace("https://twitter.com/", "https://vxtwitter.com/")
     if url.startswith("https://instagram.com/") or url.startswith("https://www.instagram.com/"):
-        return url.replace("https://www.instagram.com/", "https://ddinstagram.com/").replace("https://instagram.com/", "https://ddinstagram.com/")
+        return url.replace("https://www.instagram.com/", "https://kkinstagram.com/").replace("https://instagram.com/", "https://kkinstagram.com/")
     return url
 
 
