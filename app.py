@@ -17,7 +17,11 @@ from dotenv import load_dotenv
 from flask import Flask, abort, jsonify, request
 from nacl.exceptions import BadSignatureError
 from nacl.signing import VerifyKey
-from pypinyin import lazy_pinyin
+from pypinyin import load_phrases_dict, lazy_pinyin
+
+# pypinyin 猜多音字有時會猜錯（例如把「長離」的長讀成首長的 zhǎng，不是角色實際唸法 cháng）——
+# 這裡手動修正遇到的個案，之後同音字比對又抓錯哪個角色再往這裡加一行就好。
+load_phrases_dict({"長離": [["cháng"], ["lí"]]})
 
 load_dotenv()
 

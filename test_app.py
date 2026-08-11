@@ -23,7 +23,7 @@ class TestCollect(unittest.TestCase):
         # later can't collide with these fixed test keywords.
         self._real_hashtags = app_module.HASHTAGS
         self._real_hashtags_pinyin = app_module.HASHTAGS_PINYIN
-        app_module.HASHTAGS = {"秧秧": ["YangyangXuanling"]}
+        app_module.HASHTAGS = {"秧秧": ["YangyangXuanling"], "長離": ["Changli"]}
         app_module.HASHTAGS_PINYIN = {name: "".join(app_module.lazy_pinyin(name)) for name in app_module.HASHTAGS}
         self.addCleanup(self._restore)
 
@@ -93,6 +93,11 @@ class TestCollect(unittest.TestCase):
         self.assertIn("秧秧", app_module.autocomplete_matches("央"))
         self.assertIn("秧秧", app_module.autocomplete_matches("秧"))  # exact substring still matches too
         self.assertNotIn("秧秧", app_module.autocomplete_matches("完全不相關"))
+
+    def test_autocomplete_heteronym_override(self):
+        # 長 is polyphonic (cháng vs zhǎng); pypinyin defaults to zhǎng here without the override
+        # registered in app.py, which would break matching on "常" (cháng)-sounding homophones.
+        self.assertIn("長離", app_module.autocomplete_matches("常"))
 
 
 if __name__ == "__main__":
