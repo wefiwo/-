@@ -23,8 +23,16 @@ class TestCollect(unittest.TestCase):
         # later can't collide with these fixed test keywords.
         self._real_hashtags = app_module.HASHTAGS
         self._real_hashtags_pinyin = app_module.HASHTAGS_PINYIN
-        app_module.HASHTAGS = {"秧秧": ["YangyangXuanling"], "長離": ["Changli"]}
-        app_module.HASHTAGS_PINYIN = {name: "".join(app_module.lazy_pinyin(name)) for name in app_module.HASHTAGS}
+        self._real_hashtags_bopomofo = app_module.HASHTAGS_BOPOMOFO
+        app_module.HASHTAGS = {
+            "秧秧": ["YangyangXuanling"], "長離": ["Changli"],
+            "金城": ["Jincheng"], "景然": ["Jingran"],
+        }
+        app_module.HASHTAGS_PINYIN = {name: app_module.lazy_pinyin(name) for name in app_module.HASHTAGS}
+        app_module.HASHTAGS_BOPOMOFO = {
+            name: "".join(app_module.lazy_pinyin(name, style=app_module.Style.BOPOMOFO)).translate(app_module._BOPOMOFO_TONE_MARKS)
+            for name in app_module.HASHTAGS
+        }
         self.addCleanup(self._restore)
 
     def _restore(self):
@@ -32,6 +40,7 @@ class TestCollect(unittest.TestCase):
         app_module.COLLECTED_PATH = self._real_path
         app_module.HASHTAGS = self._real_hashtags
         app_module.HASHTAGS_PINYIN = self._real_hashtags_pinyin
+        app_module.HASHTAGS_BOPOMOFO = self._real_hashtags_bopomofo
 
     def test_collect_matches_hashtag_and_dedups(self):
         payload = {
@@ -98,6 +107,18 @@ class TestCollect(unittest.TestCase):
         # 長 is polyphonic (cháng vs zhǎng); pypinyin defaults to zhǎng here without the override
         # registered in app.py, which would break matching on "常" (cháng)-sounding homophones.
         self.assertIn("長離", app_module.autocomplete_matches("常"))
+
+    def test_autocomplete_matches_exact_syllable_not_prefix(self):
+        # jīn (金) shouldn't match jǐng (景然) just because the string "jin" happens to be a
+        # literal prefix of "jing" once pinyin syllables get concatenated without boundaries.
+        self.assertIn("金城", app_module.autocomplete_matches("金"))
+        self.assertNotIn("景然", app_module.autocomplete_matches("金"))
+
+    def test_autocomplete_matches_bopomofo(self):
+        # Discord's autocomplete box sometimes can't reach a Zhuyin IME's candidate popup, so it
+        # submits the raw bopomofo symbols before a character was ever selected (秧 -> ㄧㄤ).
+        self.assertIn("秧秧", app_module.autocomplete_matches("ㄧㄤ"))
+        self.assertNotIn("秧秧", app_module.autocomplete_matches("ㄔㄤ"))
 
 
 if __name__ == "__main__":

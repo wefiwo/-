@@ -17,7 +17,7 @@ from dotenv import load_dotenv
 from flask import Flask, abort, jsonify, request
 from nacl.exceptions import BadSignatureError
 from nacl.signing import VerifyKey
-from pypinyin import load_phrases_dict, lazy_pinyin
+from pypinyin import Style, load_phrases_dict, lazy_pinyin
 
 # pypinyin 猜多音字有時會猜錯（例如把「長離」的長讀成首長的 zhǎng，不是角色實際唸法 cháng）——
 # 這裡手動修正遇到的個案，之後同音字比對又抓錯哪個角色再往這裡加一行就好。
@@ -52,13 +52,31 @@ UPSTASH_TOKEN = os.environ.get("UPSTASH_REDIS_REST_TOKEN", "")
 with open(HASHTAGS_PATH, encoding="utf-8") as f:
     HASHTAGS = {k: (v if isinstance(v, list) else [v]) for k, v in json.load(f).items() if not k.startswith("_")}
 
-# 拼音查一次存起來，同音字（碎/歲/穗都唸 sui）autocomplete 才找得到，不用每次打字都重轉換。
-HASHTAGS_PINYIN = {name: "".join(lazy_pinyin(name)) for name in HASHTAGS}
+# 拼音查一次存起來，同音字（碎/歲/穗都唸 sui）autocomplete 才找得到，不用每次打字都重轉換。存成
+# 音節清單而不是直接拼接字串，比對時才不會把 jin 誤判成 jing 的前綴（兩個不同音節，拼起來字串上
+# 卻剛好一個是另一個的子字串）。
+HASHTAGS_PINYIN = {name: lazy_pinyin(name) for name in HASHTAGS}
+
+
+def _contains_syllables(needle, haystack):
+    return any(haystack[i:i + len(needle)] == needle for i in range(len(haystack) - len(needle) + 1))
+
+# 注音同理：Discord 的輸入框有時接不到注音輸入法的選字視窗，打到一半會直接送出還沒選字的注音符號
+# （例如打「金」只送出 ㄐㄧㄣ），所以也比照拼音做成同音字對照表。聲調符號略過比較——沒選字的話通常
+# 連聲調鍵都還沒按。
+_BOPOMOFO_TONE_MARKS = str.maketrans("", "", "ˊˇˋ˙")
+HASHTAGS_BOPOMOFO = {name: "".join(lazy_pinyin(name, style=Style.BOPOMOFO)).translate(_BOPOMOFO_TONE_MARKS) for name in HASHTAGS}
 
 
 def autocomplete_matches(query):
-    query_pinyin = "".join(lazy_pinyin(query)) if query else ""
-    return [name for name in HASHTAGS if query in name or (query_pinyin and query_pinyin in HASHTAGS_PINYIN[name])][:25]
+    query_syllables = lazy_pinyin(query) if query else []
+    query_bopomofo = query.translate(_BOPOMOFO_TONE_MARKS) if query else ""
+    return [
+        name for name in HASHTAGS
+        if query in name
+        or (query_syllables and _contains_syllables(query_syllables, HASHTAGS_PINYIN[name]))
+        or (query_bopomofo and query_bopomofo in HASHTAGS_BOPOMOFO[name])
+    ][:25]
 
 
 def load_collected():
