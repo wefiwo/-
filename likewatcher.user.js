@@ -1,10 +1,12 @@
 // ==UserScript==
-// @name         抓圖 Bot - X 按讚自動蒐集
+// @name         抓圖 Bot - X/IG 按讚自動蒐集
 // @namespace    ponytail
-// @version      1.0
-// @description  在 X 按讚符合角色 Hashtag 的推文時，自動送去自己的 Discord 機器人後端收藏
+// @version      2.0
+// @description  在 X 或 Instagram 按讚符合角色 Hashtag 的貼文時，自動送去自己的 Discord 機器人後端收藏
 // @match        https://x.com/*
 // @match        https://twitter.com/*
+// @match        https://www.instagram.com/*
+// @match        https://instagram.com/*
 // @grant        GM_xmlhttpRequest
 // @connect      *
 // ==/UserScript==
@@ -44,84 +46,169 @@
       .map(([name]) => name);
   }
 
-  function detectMediaType(article) {
-    if (article.querySelector('[data-testid="videoPlayer"]')) return "video";
-    if (article.querySelector('[data-testid="tweetPhoto"]')) return "photo";
-    return null; // 純文字推文，不是我們要的
+  function submitCollect(tag, { url, author, text, mediaType, chars }) {
+    GM_xmlhttpRequest({
+      method: "POST",
+      url: BACKEND_URL + "/collect",
+      headers: { "Content-Type": "application/json", "X-Collect-Secret": COLLECT_SECRET },
+      data: JSON.stringify({ url, author, text, type: mediaType }),
+      onload: (res) => console.log(tag, chars, res.status, res.responseText),
+      onerror: (e) => console.error(tag + " 送出失敗", e),
+    });
   }
 
-  // X 自動翻譯時，畫面上顯示的是譯文，hashtag 常常因此比對不到——先把「顯示原文」按掉抓字比對，
-  // 比對完再切回「顯示翻譯」，不影響你平常想看翻譯內文的習慣。
-  // ponytail: 用按鈕文字做多語系比對，X 改版/換語言介面的話這裡可能要跟著調整。
-  const SHOW_ORIGINAL_PHRASES = ["顯示原文", "显示原文", "Show original", "元のツイートを表示", "번역 전 표시", "원문 보기"];
-  const SHOW_TRANSLATION_PHRASES = ["顯示翻譯", "显示翻译", "Show translation", "翻訳を表示", "번역 보기"];
+  const isInstagram = /(^|\.)instagram\.com$/.test(location.hostname);
 
-  function findButtonByPhrases(article, phrases) {
-    for (const el of article.querySelectorAll('[role="button"]')) {
-      const t = el.innerText?.trim();
-      if (t && phrases.some((p) => t === p || t.includes(p))) return el;
+  if (!isInstagram) {
+    // ───────────────────────── X / Twitter ─────────────────────────
+    function detectMediaType(article) {
+      if (article.querySelector('[data-testid="videoPlayer"]')) return "video";
+      if (article.querySelector('[data-testid="tweetPhoto"]')) return "photo";
+      return null; // 純文字推文，不是我們要的
     }
-    return null;
-  }
 
-  function readOriginalText(article, cb) {
-    const showOriginalBtn = findButtonByPhrases(article, SHOW_ORIGINAL_PHRASES);
-    if (!showOriginalBtn) {
-      cb(article.querySelector('[data-testid="tweetText"]')?.innerText || "");
-      return;
-    }
-    console.log("[抓圖收藏] 偵測到翻譯，先切回原文");
-    showOriginalBtn.click();
-    setTimeout(() => {
-      const text = article.querySelector('[data-testid="tweetText"]')?.innerText || "";
-      const showTranslationBtn = findButtonByPhrases(article, SHOW_TRANSLATION_PHRASES);
-      if (showTranslationBtn) {
-        console.log("[抓圖收藏] 比對完成，切回翻譯顯示");
-        showTranslationBtn.click();
+    // X 自動翻譯時，畫面上顯示的是譯文，hashtag 常常因此比對不到——先把「顯示原文」按掉抓字比對，
+    // 比對完再切回「顯示翻譯」，不影響你平常想看翻譯內文的習慣。
+    // ponytail: 用按鈕文字做多語系比對，X 改版/換語言介面的話這裡可能要跟著調整。
+    const SHOW_ORIGINAL_PHRASES = ["顯示原文", "显示原文", "Show original", "元のツイートを表示", "번역 전 표시", "원문 보기"];
+    const SHOW_TRANSLATION_PHRASES = ["顯示翻譯", "显示翻译", "Show translation", "翻訳を表示", "번역 보기"];
+
+    function findButtonByPhrases(article, phrases) {
+      for (const el of article.querySelectorAll('[role="button"]')) {
+        const t = el.innerText?.trim();
+        if (t && phrases.some((p) => t === p || t.includes(p))) return el;
       }
-      cb(text);
-    }, 500);
-  }
+      return null;
+    }
 
-  document.addEventListener(
-    "click",
-    (ev) => {
-      // data-testid="like" = 目前未按讚、這一下是要「按讚」的那顆按鈕
-      const likeBtn = ev.target.closest('[data-testid="like"]');
-      if (!likeBtn) return;
+    function readOriginalText(article, cb) {
+      const showOriginalBtn = findButtonByPhrases(article, SHOW_ORIGINAL_PHRASES);
+      if (!showOriginalBtn) {
+        cb(article.querySelector('[data-testid="tweetText"]')?.innerText || "");
+        return;
+      }
+      console.log("[抓圖收藏] 偵測到翻譯，先切回原文");
+      showOriginalBtn.click();
+      setTimeout(() => {
+        const text = article.querySelector('[data-testid="tweetText"]')?.innerText || "";
+        const showTranslationBtn = findButtonByPhrases(article, SHOW_TRANSLATION_PHRASES);
+        if (showTranslationBtn) {
+          console.log("[抓圖收藏] 比對完成，切回翻譯顯示");
+          showTranslationBtn.click();
+        }
+        cb(text);
+      }, 500);
+    }
 
-      const article = likeBtn.closest('article[data-testid="tweet"]');
-      if (!article) return;
+    document.addEventListener(
+      "click",
+      (ev) => {
+        // data-testid="like" = 目前未按讚、這一下是要「按讚」的那顆按鈕
+        const likeBtn = ev.target.closest('[data-testid="like"]');
+        if (!likeBtn) return;
 
-      const mediaType = detectMediaType(article);
-      if (!mediaType) return;
+        const article = likeBtn.closest('article[data-testid="tweet"]');
+        if (!article) return;
 
-      const link = article.querySelector('a[href*="/status/"] time')?.closest("a");
-      if (!link) return;
-      const m = link.href.match(/^https:\/\/(?:x|twitter)\.com\/([^/]+)\/status\/(\d+)/);
-      if (!m) return;
-      const [, author, id] = m;
-      const url = `https://x.com/${author}/status/${id}`;
+        const mediaType = detectMediaType(article);
+        if (!mediaType) return;
 
-      readOriginalText(article, (text) => {
+        const link = article.querySelector('a[href*="/status/"] time')?.closest("a");
+        if (!link) return;
+        const m = link.href.match(/^https:\/\/(?:x|twitter)\.com\/([^/]+)\/status\/(\d+)/);
+        if (!m) return;
+        const [, author, id] = m;
+        const url = `https://x.com/${author}/status/${id}`;
+
+        readOriginalText(article, (text) => {
+          loadHashtags((tags) => {
+            const chars = matchedCharacters(text, tags);
+            if (chars.length === 0) {
+              console.log("[抓圖收藏] 沒對到任何角色關鍵字，略過", text);
+              return;
+            }
+            submitCollect("[抓圖收藏]", { url, author, text, mediaType, chars });
+          });
+        });
+      },
+      true
+    );
+  } else {
+    // ───────────────────────── Instagram ─────────────────────────
+    // IG 沒有 X 那種穩定的 data-testid，改用網址規律（/p/、/reel/、/username/）去找貼文連結跟作者，
+    // 比綁死特定 class 名稱穩（IG 的 class 是打包工具產生的亂碼，隨時會變）。
+    // ponytail: 這段是照少量真實 DOM 樣本寫的，選擇器抓不到東西時看 console log 的訊息再調整。
+    const LIKE_LABELS = ["讚", "Like", "like"];
+    const PERMALINK_SELECTOR = 'a[href*="/p/"], a[href*="/reel/"]';
+    const RESERVED_PATHS = new Set(["p", "reel", "reels", "explore", "accounts", "stories", "direct", "tv", "about", "developer", ""]);
+
+    function findLikeSvg(target) {
+      const svg = target.closest("svg[aria-label]");
+      if (!svg) return null;
+      return LIKE_LABELS.includes(svg.getAttribute("aria-label")) ? svg : null;
+    }
+
+    function findPostContainer(el) {
+      let node = el.parentElement;
+      for (let i = 0; i < 25 && node; i++, node = node.parentElement) {
+        if (node.querySelector(PERMALINK_SELECTOR)) return node;
+      }
+      return null;
+    }
+
+    function extractPermalink(container) {
+      const a = container.querySelector(PERMALINK_SELECTOR);
+      if (!a) return null;
+      const m = a.href.match(/^https:\/\/(?:www\.)?instagram\.com\/(p|reel)\/([A-Za-z0-9_-]+)/);
+      return m ? `https://www.instagram.com/${m[1]}/${m[2]}/` : null;
+    }
+
+    function extractAuthor(container) {
+      for (const a of container.querySelectorAll('a[href^="/"]')) {
+        const m = a.getAttribute("href").match(/^\/([A-Za-z0-9_.]{1,30})\/?$/);
+        if (m && !RESERVED_PATHS.has(m[1].toLowerCase())) return m[1];
+      }
+      return null;
+    }
+
+    function extractCaption(container) {
+      return container.querySelector('h1[dir="auto"]')?.innerText || "";
+    }
+
+    document.addEventListener(
+      "click",
+      (ev) => {
+        const svg = findLikeSvg(ev.target);
+        if (!svg) return;
+
+        const container = findPostContainer(svg);
+        if (!container) {
+          console.log("[抓圖收藏][IG] 找不到貼文容器，略過（選擇器可能要調整）");
+          return;
+        }
+
+        const url = extractPermalink(container);
+        const author = extractAuthor(container);
+        const text = extractCaption(container);
+        const mediaType = container.querySelector("video") ? "video" : "photo";
+
+        console.log("[抓圖收藏][IG] 偵測到讚", { url, author, mediaType, textPreview: text.slice(0, 30) });
+
+        if (!url || !author) {
+          console.log("[抓圖收藏][IG] 抓不到網址或帳號，略過（選擇器可能要調整）");
+          return;
+        }
+
         loadHashtags((tags) => {
           const chars = matchedCharacters(text, tags);
           if (chars.length === 0) {
-            console.log("[抓圖收藏] 沒對到任何角色關鍵字，略過", text);
+            console.log("[抓圖收藏][IG] 沒對到任何角色關鍵字，略過", text);
             return;
           }
-
-          GM_xmlhttpRequest({
-            method: "POST",
-            url: BACKEND_URL + "/collect",
-            headers: { "Content-Type": "application/json", "X-Collect-Secret": COLLECT_SECRET },
-            data: JSON.stringify({ url, author, text, type: mediaType }),
-            onload: (res) => console.log("[抓圖收藏]", chars, res.status, res.responseText),
-            onerror: (e) => console.error("[抓圖收藏] 送出失敗", e),
-          });
+          submitCollect("[抓圖收藏][IG]", { url, author, text, mediaType, chars });
         });
-      });
-    },
-    true
-  );
+      },
+      true
+    );
+  }
 })();
