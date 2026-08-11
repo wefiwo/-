@@ -149,10 +149,10 @@
       return LIKE_LABELS.includes(svg.getAttribute("aria-label")) ? svg : null;
     }
 
-    // 真正的貼文代碼幾乎不會是純小寫英文單字（頁尾那些 /legal/privacy/、/about/jobs/ 之類的導覽連結才是），
-    // 混了大寫/數字/底線/連字號才像真的 shortcode，藉此把頁尾連結濾掉。
+    // 真正的貼文代碼是打亂的 base64 風格字串，幾乎一定會出現大寫字母或數字；純小寫＋底線/連字號
+    // 的通常是人寫的頁面路徑（/accounts/meta_verified/、/legal/privacy/ 之類），藉此濾掉。
     function looksLikeShortcode(s) {
-      return /[0-9A-Z_-]/.test(s);
+      return /[0-9A-Z]/.test(s);
     }
 
     function findPostLink(root) {
