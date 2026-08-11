@@ -1,9 +1,10 @@
 """Discord HTTP-interactions bot: /抓圖 <角色> <類型> replies with a random post from your own collection.
 
-Media source: posts you like on X get auto-collected by a userscript (see likewatcher.user.js)
-that watches your own logged-in browser session — see README for why this replaces both the
-official X API (search needs a paid plan) and scraping (means bypassing X's anti-bot defenses,
-which this project won't do). Discord auto-embeds the tweet link itself, no download needed.
+Media source: posts you like on X (and optionally Instagram) get auto-collected by a userscript
+(see likewatcher.user.js) that watches your own logged-in browser session — see README for why
+this replaces both the official X API (search needs a paid plan) and scraping (means bypassing
+X's anti-bot defenses, which this project won't do). Discord auto-embeds the link itself, no
+download needed.
 """
 import json
 import os
@@ -31,6 +32,8 @@ APP_ID = os.environ.get("DISCORD_APPLICATION_ID") or requests.get(
 ).json()["id"]
 
 TWEET_URL_RE = re.compile(r"^https://(?:x|twitter)\.com/([A-Za-z0-9_]{1,15})/status/(\d+)$")
+INSTAGRAM_URL_RE = re.compile(r"^https://(?:www\.)?instagram\.com/(?:p|reel)/([A-Za-z0-9_-]+)/?$")
+INSTAGRAM_USERNAME_RE = re.compile(r"^[A-Za-z0-9_.]{1,30}$")
 
 HASHTAGS_PATH = Path(__file__).parent / "hashtags.json"
 COLLECTED_PATH = Path(__file__).parent / "collected.json"
@@ -70,9 +73,14 @@ def save_collected(data):
 
 
 def fix_embed_url(url):
-    # vxtwitter.com is a free public proxy that re-serves proper Open Graph tags so Discord
-    # actually embeds the image/video inline (x.com's own tags don't unfurl reliably there).
-    return url.replace("https://x.com/", "https://vxtwitter.com/").replace("https://twitter.com/", "https://vxtwitter.com/")
+    # vxtwitter.com / ddinstagram.com are free public proxies that re-serve proper Open Graph
+    # tags so Discord actually embeds the image/video inline (the real domains don't unfurl
+    # reliably there).
+    if url.startswith("https://x.com/") or url.startswith("https://twitter.com/"):
+        return url.replace("https://x.com/", "https://vxtwitter.com/").replace("https://twitter.com/", "https://vxtwitter.com/")
+    if url.startswith("https://instagram.com/") or url.startswith("https://www.instagram.com/"):
+        return url.replace("https://www.instagram.com/", "https://ddinstagram.com/").replace("https://instagram.com/", "https://ddinstagram.com/")
+    return url
 
 
 def verify(req):
@@ -138,10 +146,23 @@ def collect():
 
     body = request.get_json(force=True, silent=True) or {}
     text, media_type = body.get("text", ""), body.get("type")
-    m = TWEET_URL_RE.match(body.get("url", ""))
-    if not m or media_type not in ("photo", "video"):
-        abort(400)  # reject anything that isn't actually an x.com/twitter.com tweet link
-    url, author = m.group(0).replace("twitter.com", "x.com"), m.group(1)  # author from the URL itself, not client-claimed
+    raw_url = body.get("url", "")
+    if media_type not in ("photo", "video"):
+        abort(400)
+
+    tweet_m = TWEET_URL_RE.match(raw_url)
+    ig_m = INSTAGRAM_URL_RE.match(raw_url)
+    if tweet_m:
+        # x.com/twitter.com embeds the author right in the URL — trust that, not the client's claim.
+        url, author = tweet_m.group(0).replace("twitter.com", "x.com"), tweet_m.group(1)
+    elif ig_m:
+        # Instagram post URLs don't carry the author, so this one has to come from the client
+        # (extracted from the page DOM, same trust level as `text` below) — just shape-check it.
+        url, author = ig_m.group(0), (body.get("author") or "").strip()
+        if not INSTAGRAM_USERNAME_RE.match(author):
+            abort(400)
+    else:
+        abort(400)  # reject anything that isn't actually a real x.com/twitter.com/instagram.com post link
 
     lower_text = text.lower()
     matched = [name for name, tags in HASHTAGS.items() if any(t.lower() in lower_text for t in tags)]

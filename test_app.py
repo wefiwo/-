@@ -19,11 +19,16 @@ class TestCollect(unittest.TestCase):
         # scratch file for the duration of each test and restore afterwards.
         self._real_path = app_module.COLLECTED_PATH
         app_module.COLLECTED_PATH = Path(tempfile.mktemp(suffix=".json"))
+        # also isolate from the real (ever-growing) hashtags.json, so new characters you add
+        # later can't collide with these fixed test keywords.
+        self._real_hashtags = app_module.HASHTAGS
+        app_module.HASHTAGS = {"秧秧": ["YangyangXuanling"]}
         self.addCleanup(self._restore)
 
     def _restore(self):
         app_module.COLLECTED_PATH.unlink(missing_ok=True)
         app_module.COLLECTED_PATH = self._real_path
+        app_module.HASHTAGS = self._real_hashtags
 
     def test_collect_matches_hashtag_and_dedups(self):
         payload = {
@@ -57,6 +62,26 @@ class TestCollect(unittest.TestCase):
 
     def test_collect_rejects_non_x_url(self):
         payload = {"url": "https://evil.example.com/free-nitro", "author": "a", "type": "photo", "text": "#YangyangXuanling"}
+        r = self.client.post("/collect", json=payload, headers={"X-Collect-Secret": "test-secret"})
+        self.assertEqual(r.status_code, 400)
+
+    def test_collect_accepts_instagram_url_with_valid_author(self):
+        payload = {
+            "url": "https://www.instagram.com/p/ABC123xyz/",
+            "author": "some.artist_1",
+            "type": "photo",
+            "text": "#YangyangXuanling fanart",
+        }
+        r = self.client.post("/collect", json=payload, headers={"X-Collect-Secret": "test-secret"})
+        self.assertEqual(r.get_json()["added_to"], ["秧秧"])
+
+    def test_collect_rejects_instagram_url_with_bad_author(self):
+        payload = {
+            "url": "https://www.instagram.com/p/ABC123xyz/",
+            "author": "not a valid username!",
+            "type": "photo",
+            "text": "#YangyangXuanling fanart",
+        }
         r = self.client.post("/collect", json=payload, headers={"X-Collect-Secret": "test-secret"})
         self.assertEqual(r.status_code, 400)
 
