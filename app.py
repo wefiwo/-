@@ -17,6 +17,7 @@ from dotenv import load_dotenv
 from flask import Flask, abort, jsonify, request
 from nacl.exceptions import BadSignatureError
 from nacl.signing import VerifyKey
+from pypinyin import lazy_pinyin
 
 load_dotenv()
 
@@ -46,6 +47,14 @@ UPSTASH_TOKEN = os.environ.get("UPSTASH_REDIS_REST_TOKEN", "")
 
 with open(HASHTAGS_PATH, encoding="utf-8") as f:
     HASHTAGS = {k: (v if isinstance(v, list) else [v]) for k, v in json.load(f).items() if not k.startswith("_")}
+
+# 拼音查一次存起來，同音字（碎/歲/穗都唸 sui）autocomplete 才找得到，不用每次打字都重轉換。
+HASHTAGS_PINYIN = {name: "".join(lazy_pinyin(name)) for name in HASHTAGS}
+
+
+def autocomplete_matches(query):
+    query_pinyin = "".join(lazy_pinyin(query)) if query else ""
+    return [name for name in HASHTAGS if query in name or (query_pinyin and query_pinyin in HASHTAGS_PINYIN[name])][:25]
 
 
 def load_collected():
@@ -113,8 +122,7 @@ def interactions():
 
     if itype == 4:  # autocomplete
         focused = next(o for o in body["data"]["options"] if o.get("focused"))
-        query = focused["value"].strip()
-        matches = [name for name in HASHTAGS if query in name][:25]
+        matches = autocomplete_matches(focused["value"].strip())
         return jsonify({"type": 8, "data": {"choices": [{"name": n, "value": n} for n in matches]}})
 
     if itype == 2:  # slash command invoked

@@ -3,3 +3,4 @@ requests>=2.31
 PyNaCl>=1.5
 python-dotenv>=1.0
 waitress>=3.0
+pypinyin>=0.51

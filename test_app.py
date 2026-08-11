@@ -22,13 +22,16 @@ class TestCollect(unittest.TestCase):
         # also isolate from the real (ever-growing) hashtags.json, so new characters you add
         # later can't collide with these fixed test keywords.
         self._real_hashtags = app_module.HASHTAGS
+        self._real_hashtags_pinyin = app_module.HASHTAGS_PINYIN
         app_module.HASHTAGS = {"秧秧": ["YangyangXuanling"]}
+        app_module.HASHTAGS_PINYIN = {name: "".join(app_module.lazy_pinyin(name)) for name in app_module.HASHTAGS}
         self.addCleanup(self._restore)
 
     def _restore(self):
         app_module.COLLECTED_PATH.unlink(missing_ok=True)
         app_module.COLLECTED_PATH = self._real_path
         app_module.HASHTAGS = self._real_hashtags
+        app_module.HASHTAGS_PINYIN = self._real_hashtags_pinyin
 
     def test_collect_matches_hashtag_and_dedups(self):
         payload = {
@@ -84,6 +87,12 @@ class TestCollect(unittest.TestCase):
         }
         r = self.client.post("/collect", json=payload, headers={"X-Collect-Secret": "test-secret"})
         self.assertEqual(r.status_code, 400)
+
+    def test_autocomplete_matches_homophone(self):
+        # 秧秧 is pinyin "yangyang"; 央 is a homophone of 秧 (both "yang") but a different character.
+        self.assertIn("秧秧", app_module.autocomplete_matches("央"))
+        self.assertIn("秧秧", app_module.autocomplete_matches("秧"))  # exact substring still matches too
+        self.assertNotIn("秧秧", app_module.autocomplete_matches("完全不相關"))
 
 
 if __name__ == "__main__":
