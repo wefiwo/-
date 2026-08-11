@@ -172,12 +172,20 @@
       return null;
     }
 
+    // 貼文作者的頭像連結跟帳號名稱連結會連續出現兩次、指向同一個網址（頭貼一次、文字一次），
+    // 留言者/推薦帳號通常只出現一次——用這個特徵抓到「真正的作者」，不會被其他連結誤導。
+    // 實測驗證過：套用在真實貼文上正確抓到作者，不是第一個出現的帳號連結。
     function extractAuthor(container) {
-      for (const a of container.querySelectorAll('a[href^="/"]')) {
-        const m = a.getAttribute("href").match(/^\/([A-Za-z0-9_.]{1,30})\/?$/);
-        if (m && !RESERVED_PATHS.has(m[1].toLowerCase())) return m[1];
+      const candidates = [...container.querySelectorAll('a[href^="/"]')]
+        .map((a) => a.getAttribute("href"))
+        .filter((href) => {
+          const m = href && href.match(/^\/([A-Za-z0-9_.]{1,30})\/?$/);
+          return m && !RESERVED_PATHS.has(m[1].toLowerCase());
+        });
+      for (let i = 0; i < candidates.length - 1; i++) {
+        if (candidates[i] === candidates[i + 1]) return candidates[i].match(/^\/([A-Za-z0-9_.]{1,30})\/?$/)[1];
       }
-      return null;
+      return candidates[0]?.match(/^\/([A-Za-z0-9_.]{1,30})\/?$/)?.[1] || null;
     }
 
     function extractCaption(container) {
