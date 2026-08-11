@@ -159,21 +159,22 @@
       return candidates[0] || null;
     }
 
-    // Reels 滑動瀏覽時內文疊在影片上、藏在讀不到的 closed Shadow DOM 裡——改打貼文自己的網址，
-    // 讀伺服器 HTML 的 og:description 標籤，內文+ hashtag 都在裡面，不受畫面渲染狀態影響。
-    function fetchCaption(url, cb) {
+    // Reels 滑動瀏覽時內文疊在影片上、藏在讀不到的 closed Shadow DOM 裡，<video> 標籤也一樣摸不到、
+    // 用 DOM 判斷型態還可能誤抓到畫面上其他不相干的影片——改打貼文自己的網址，讀伺服器 HTML：
+    // og:description 給內文+hashtag，og:url 的路徑（/p/ 還是 /reel/）給真正的媒體型態，都不受畫面影響。
+    function fetchPostInfo(url, cb) {
       fetch(url, { credentials: "include" })
         .then((r) => r.text())
         .then((html) => {
-          const m = html.match(/<meta property="og:description" content="([^"]*)"/);
-          if (!m) return cb("");
+          const descM = html.match(/<meta property="og:description" content="([^"]*)"/);
+          const urlM = html.match(/<meta property="og:url" content="([^"]*)"/);
           const ta = document.createElement("textarea");
-          ta.innerHTML = m[1];
-          cb(ta.value);
+          ta.innerHTML = descM ? descM[1] : "";
+          cb({ text: ta.value, mediaType: /\/reel\//.test(urlM?.[1] || "") ? "video" : "photo" });
         })
         .catch((e) => {
-          console.error("[抓圖收藏][IG] 抓內文失敗", e);
-          cb("");
+          console.error("[抓圖收藏][IG] 抓貼文資訊失敗", e);
+          cb({ text: "", mediaType: "photo" });
         });
     }
 
@@ -190,20 +191,18 @@
         const m = container && (onPostPage || findPostLink(container));
         if (!m) return console.log("[抓圖收藏][IG] 找不到貼文連結，略過（選擇器可能要調整）");
 
-        let url, author, isReel;
+        let url, author;
         if (m[1]) {
           const type = m[1] === "reels" ? "reel" : m[1]; // 統一存單數，跟後端格式一致，兩種網址其實通用
           url = `https://www.instagram.com/${type}/${m[2]}/`;
           author = extractAuthor(container);
-          isReel = type === "reel";
         } else {
           url = `https://www.instagram.com/p/${m[4]}/`;
           author = m[3];
         }
         if (!author) return console.log("[抓圖收藏][IG] 抓不到帳號，略過（選擇器可能要調整）");
-        const mediaType = isReel || container.querySelector("video") ? "video" : "photo"; // Reel 必是影片
 
-        fetchCaption(url, (text) => {
+        fetchPostInfo(url, ({ text, mediaType }) => {
           console.log("[抓圖收藏][IG] 偵測到讚", { url, author, mediaType, textPreview: text.slice(0, 30) });
           loadHashtags((tags) => {
             const chars = matchedCharacters(text, tags);
