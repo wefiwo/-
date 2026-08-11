@@ -127,7 +127,7 @@ def interactions():
             })
 
         entry = random.choice(pool)
-        content = f"**{character}** 的{media_type}\n{fix_embed_url(entry['url'])}\n繪師：@{entry['author']}"
+        content = f"**{character}** 的{media_type}\n{fix_embed_url(entry['url'])}"
         return jsonify({"type": 4, "data": {"content": content}})
 
     return ("", 400)
