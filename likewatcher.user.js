@@ -190,13 +190,20 @@
         const svg = findLikeSvg(ev.target);
         if (!svg) return;
 
-        const container = findPostContainer(svg);
+        // 如果現在就是在瀏覽單篇貼文頁面（網址列本身就是貼文連結），直接信任網址列——
+        // 比去 DOM 裡找連結準得多，且不會有往上爬過頭誤抓到頁尾連結的問題。
+        const onPostPage = location.href.match(POST_LINK_RE);
+        const container = onPostPage ? document : findPostContainer(svg);
         if (!container) {
           console.log("[抓圖收藏][IG] 找不到貼文容器，略過（選擇器可能要調整）");
           return;
         }
 
-        const m = findPostLink(container);
+        const m = onPostPage || findPostLink(container);
+        if (!m) {
+          console.log("[抓圖收藏][IG] 找不到貼文連結，略過（選擇器可能要調整）");
+          return;
+        }
         let url, author;
         if (m[1]) {
           url = `https://www.instagram.com/${m[1]}/${m[2]}/`;
