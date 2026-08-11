@@ -140,8 +140,9 @@
     // ponytail: 這段是照少量真實 DOM 樣本寫的，選擇器抓不到東西時看 console log 的訊息再調整。
     const LIKE_LABELS = ["讚", "Like", "like"];
     const RESERVED_PATHS = new Set(["p", "reel", "reels", "explore", "accounts", "stories", "direct", "tv", "about", "developer", ""]);
-    // IG 貼文連結有兩種格式都會遇到：/p/{code}/、/reel/{code}/，或直接 /帳號名/{code}/（後者連作者都內建在網址裡）。
-    const POST_LINK_RE = /^https:\/\/(?:www\.)?instagram\.com\/(?:(p|reel)\/([A-Za-z0-9_-]+)|([A-Za-z0-9_.]{1,30})\/([A-Za-z0-9_-]{5,30}))\/?(?:\?.*)?$/;
+    // IG 貼文連結有三種格式都會遇到：/p/{code}/、/reel/{code}/、/reels/{code}/（Reels 分頁自己的網址，
+    // 複數形，容易被誤判成帳號名稱），或直接 /帳號名/{code}/（後者連作者都內建在網址裡）。
+    const POST_LINK_RE = /^https:\/\/(?:www\.)?instagram\.com\/(?:(p|reel|reels)\/([A-Za-z0-9_-]+)|([A-Za-z0-9_.]{1,30})\/([A-Za-z0-9_-]{5,30}))\/?(?:\?.*)?$/;
 
     function findLikeSvg(target) {
       const svg = target.closest("svg[aria-label]");
@@ -155,11 +156,17 @@
       return /[0-9A-Z]/.test(s);
     }
 
+    // m[1] 分支（/p/、/reel/、/reels/）本來就是真的貼文類型，直接信；m[3] 分支是「猜出來」的帳號名，
+    // 還要順便擋掉頁尾導覽連結（/legal/privacy/ 這種）跟保留字。
+    function isValidPostMatch(m) {
+      if (!m) return false;
+      return !!(m[1] || (looksLikeShortcode(m[4]) && !RESERVED_PATHS.has(m[3].toLowerCase())));
+    }
+
     function findPostLink(root) {
       for (const a of root.querySelectorAll("a[href]")) {
         const m = a.href.match(POST_LINK_RE);
-        if (!m) continue;
-        if (m[1] || looksLikeShortcode(m[4])) return m;
+        if (isValidPostMatch(m)) return m;
       }
       return null;
     }
@@ -174,22 +181,26 @@
 
     // 貼文作者的頭像連結跟帳號名稱連結會連續出現兩次、指向同一個網址（頭貼一次、文字一次），
     // 留言者/推薦帳號通常只出現一次——用這個特徵抓到「真正的作者」，不會被其他連結誤導。
-    // 實測驗證過：套用在真實貼文上正確抓到作者，不是第一個出現的帳號連結。
+    // 網址第一段就是帳號名，不管後面有沒有接 /reels/ 之類的子頁面（Reels 版面的作者連結長這樣）都算。
+    // 實測驗證過：套用在真實貼文/Reels 上正確抓到作者，不是第一個出現的帳號連結。
     function extractAuthor(container) {
       const candidates = [...container.querySelectorAll('a[href^="/"]')]
         .map((a) => a.getAttribute("href"))
-        .filter((href) => {
-          const m = href && href.match(/^\/([A-Za-z0-9_.]{1,30})\/?$/);
-          return m && !RESERVED_PATHS.has(m[1].toLowerCase());
-        });
+        .map((href) => href && href.match(/^\/([A-Za-z0-9_.]{1,30})(?:\/|$)/))
+        .filter((m) => m && !RESERVED_PATHS.has(m[1].toLowerCase()))
+        .map((m) => m[1]);
       for (let i = 0; i < candidates.length - 1; i++) {
-        if (candidates[i] === candidates[i + 1]) return candidates[i].match(/^\/([A-Za-z0-9_.]{1,30})\/?$/)[1];
+        if (candidates[i] === candidates[i + 1]) return candidates[i];
       }
-      return candidates[0]?.match(/^\/([A-Za-z0-9_.]{1,30})\/?$/)?.[1] || null;
+      return candidates[0] || null;
     }
 
+    // 一般貼文內文在 h1[dir="auto"]；Reels 版面沒有 h1，內文散落在好幾個 span[dir="auto"] 裡（還混著歌曲
+    // 資訊、選單文字等），全部串起來去比對就好，不用精準挑出哪一個才是「真正的內文」。
     function extractCaption(container) {
-      return container.querySelector('h1[dir="auto"]')?.innerText || "";
+      const h1 = container.querySelector('h1[dir="auto"]');
+      if (h1?.innerText) return h1.innerText;
+      return [...container.querySelectorAll('span[dir="auto"]')].map((el) => el.innerText).filter(Boolean).join(" ");
     }
 
     document.addEventListener(
@@ -200,7 +211,8 @@
 
         // 如果現在就是在瀏覽單篇貼文頁面（網址列本身就是貼文連結），直接信任網址列——
         // 比去 DOM 裡找連結準得多，且不會有往上爬過頭誤抓到頁尾連結的問題。
-        const onPostPage = location.href.match(POST_LINK_RE);
+        const urlMatch = location.href.match(POST_LINK_RE);
+        const onPostPage = isValidPostMatch(urlMatch) ? urlMatch : null;
         const container = onPostPage ? document : findPostContainer(svg);
         if (!container) {
           console.log("[抓圖收藏][IG] 找不到貼文容器，略過（選擇器可能要調整）");
@@ -214,7 +226,8 @@
         }
         let url, author;
         if (m[1]) {
-          url = `https://www.instagram.com/${m[1]}/${m[2]}/`;
+          const type = m[1] === "reels" ? "reel" : m[1]; // 存成單數，跟後端 /collect 認得的格式一致，兩種網址其實通用
+          url = `https://www.instagram.com/${type}/${m[2]}/`;
           author = extractAuthor(container);
         } else {
           url = `https://www.instagram.com/p/${m[4]}/`; // 統一存成正規的 /p/ 格式，跟帳號名脫鉤
