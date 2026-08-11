@@ -1,23 +1,39 @@
 // ==UserScript==
 // @name         抓圖 Bot - X/IG 按讚自動蒐集
 // @namespace    ponytail
-// @version      2.0
+// @version      3.0
 // @description  在 X 或 Instagram 按讚符合角色 Hashtag 的貼文時，自動送去自己的 Discord 機器人後端收藏
 // @match        https://x.com/*
 // @match        https://twitter.com/*
 // @match        https://www.instagram.com/*
 // @match        https://instagram.com/*
 // @grant        GM_xmlhttpRequest
+// @grant        GM_setValue
+// @grant        GM_getValue
+// @grant        GM_registerMenuCommand
 // @connect      *
+// @updateURL    https://raw.githubusercontent.com/wefiwo/-/main/likewatcher.user.js
+// @downloadURL  https://raw.githubusercontent.com/wefiwo/-/main/likewatcher.user.js
 // ==/UserScript==
 
 (function () {
   "use strict";
 
-  // ── 改這兩個 ──────────────────────────────────────────────────
   const BACKEND_URL = "https://twitterlian-dong-dcshou-tu-bot.onrender.com";
-  const COLLECT_SECRET = "貼你 .env 裡的 COLLECT_SECRET"; // 只填在 Tampermonkey 裡實際安裝的那份，這個檔案（會進 git）留空白
-  // ────────────────────────────────────────────────────────────
+
+  // 密鑰存在 Tampermonkey 自己的儲存空間，不寫在腳本內容裡——這樣腳本才能安全自動更新，
+  // 不會被新版覆蓋掉你本機設定的密鑰。第一次執行才會問一次，之後都記得住。
+  function getSecret(cb) {
+    const saved = GM_getValue("collectSecret", "");
+    if (saved) return cb(saved);
+    const entered = prompt("第一次設定：請貼上你的 COLLECT_SECRET（跟 .env 裡的一致）");
+    if (entered) GM_setValue("collectSecret", entered.trim());
+    cb(entered ? entered.trim() : "");
+  }
+  GM_registerMenuCommand("重新設定 COLLECT_SECRET", () => {
+    const entered = prompt("輸入新的 COLLECT_SECRET：", GM_getValue("collectSecret", ""));
+    if (entered) GM_setValue("collectSecret", entered.trim());
+  });
 
   let hashtagsCache = null; // 角色 → Hashtag 對照表，每次載入頁面拉一次就好
 
@@ -47,13 +63,16 @@
   }
 
   function submitCollect(tag, { url, author, text, mediaType, chars }) {
-    GM_xmlhttpRequest({
-      method: "POST",
-      url: BACKEND_URL + "/collect",
-      headers: { "Content-Type": "application/json", "X-Collect-Secret": COLLECT_SECRET },
-      data: JSON.stringify({ url, author, text, type: mediaType }),
-      onload: (res) => console.log(tag, chars, res.status, res.responseText),
-      onerror: (e) => console.error(tag + " 送出失敗", e),
+    getSecret((secret) => {
+      if (!secret) return console.error(tag + " 沒有設定 COLLECT_SECRET，取消送出");
+      GM_xmlhttpRequest({
+        method: "POST",
+        url: BACKEND_URL + "/collect",
+        headers: { "Content-Type": "application/json", "X-Collect-Secret": secret },
+        data: JSON.stringify({ url, author, text, type: mediaType }),
+        onload: (res) => console.log(tag, chars, res.status, res.responseText),
+        onerror: (e) => console.error(tag + " 送出失敗", e),
+      });
     });
   }
 
