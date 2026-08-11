@@ -64,12 +64,10 @@
     function detectMediaType(article) {
       if (article.querySelector('[data-testid="videoPlayer"]')) return "video";
       if (article.querySelector('[data-testid="tweetPhoto"]')) return "photo";
-      return null; // 純文字推文，不是我們要的
+      return null;
     }
 
-    // X 自動翻譯時，畫面上顯示的是譯文，hashtag 常常因此比對不到——先把「顯示原文」按掉抓字比對，
-    // 比對完再切回「顯示翻譯」，不影響你平常想看翻譯內文的習慣。
-    // ponytail: 用按鈕文字做多語系比對，X 改版/換語言介面的話這裡可能要跟著調整。
+    // 自動翻譯時畫面顯示譯文、hashtag 比對不到——先切回原文抓字，比完再切回翻譯顯示。
     const SHOW_ORIGINAL_PHRASES = ["顯示原文", "显示原文", "Show original", "元のツイートを表示", "번역 전 표시", "원문 보기"];
     const SHOW_TRANSLATION_PHRASES = ["顯示翻譯", "显示翻译", "Show translation", "翻訳を表示", "번역 보기"];
 
@@ -83,19 +81,11 @@
 
     function readOriginalText(article, cb) {
       const showOriginalBtn = findButtonByPhrases(article, SHOW_ORIGINAL_PHRASES);
-      if (!showOriginalBtn) {
-        cb(article.querySelector('[data-testid="tweetText"]')?.innerText || "");
-        return;
-      }
-      console.log("[抓圖收藏] 偵測到翻譯，先切回原文");
+      if (!showOriginalBtn) return cb(article.querySelector('[data-testid="tweetText"]')?.innerText || "");
       showOriginalBtn.click();
       setTimeout(() => {
         const text = article.querySelector('[data-testid="tweetText"]')?.innerText || "";
-        const showTranslationBtn = findButtonByPhrases(article, SHOW_TRANSLATION_PHRASES);
-        if (showTranslationBtn) {
-          console.log("[抓圖收藏] 比對完成，切回翻譯顯示");
-          showTranslationBtn.click();
-        }
+        findButtonByPhrases(article, SHOW_TRANSLATION_PHRASES)?.click();
         cb(text);
       }, 500);
     }
@@ -103,10 +93,8 @@
     document.addEventListener(
       "click",
       (ev) => {
-        // data-testid="like" = 目前未按讚、這一下是要「按讚」的那顆按鈕
-        const likeBtn = ev.target.closest('[data-testid="like"]');
+        const likeBtn = ev.target.closest('[data-testid="like"]'); // 未按讚狀態的按鈕
         if (!likeBtn) return;
-
         const article = likeBtn.closest('article[data-testid="tweet"]');
         if (!article) return;
 
@@ -114,8 +102,7 @@
         if (!mediaType) return;
 
         const link = article.querySelector('a[href*="/status/"] time')?.closest("a");
-        if (!link) return;
-        const m = link.href.match(/^https:\/\/(?:x|twitter)\.com\/([^/]+)\/status\/(\d+)/);
+        const m = link?.href?.match(/^https:\/\/(?:x|twitter)\.com\/([^/]+)\/status\/(\d+)/);
         if (!m) return;
         const [, author, id] = m;
         const url = `https://x.com/${author}/status/${id}`;
@@ -123,10 +110,7 @@
         readOriginalText(article, (text) => {
           loadHashtags((tags) => {
             const chars = matchedCharacters(text, tags);
-            if (chars.length === 0) {
-              console.log("[抓圖收藏] 沒對到任何角色關鍵字，略過", text);
-              return;
-            }
+            if (chars.length === 0) return console.log("[抓圖收藏] 沒對到任何角色關鍵字，略過", text);
             submitCollect("[抓圖收藏]", { url, author, text, mediaType, chars });
           });
         });
@@ -135,29 +119,13 @@
     );
   } else {
     // ───────────────────────── Instagram ─────────────────────────
-    // IG 沒有 X 那種穩定的 data-testid，改用網址規律（/p/、/reel/、/username/）去找貼文連結跟作者，
-    // 比綁死特定 class 名稱穩（IG 的 class 是打包工具產生的亂碼，隨時會變）。
-    // ponytail: 這段是照少量真實 DOM 樣本寫的，選擇器抓不到東西時看 console log 的訊息再調整。
+    // IG 沒有穩定的 data-testid，靠網址規律（/p/、/reel/、/reels/、/帳號名/代碼/）找貼文，比綁 class 名穩。
     const LIKE_LABELS = ["讚", "Like", "like"];
     const RESERVED_PATHS = new Set(["p", "reel", "reels", "explore", "accounts", "stories", "direct", "tv", "about", "developer", ""]);
-    // IG 貼文連結有三種格式都會遇到：/p/{code}/、/reel/{code}/、/reels/{code}/（Reels 分頁自己的網址，
-    // 複數形，容易被誤判成帳號名稱），或直接 /帳號名/{code}/（後者連作者都內建在網址裡）。
     const POST_LINK_RE = /^https:\/\/(?:www\.)?instagram\.com\/(?:(p|reel|reels)\/([A-Za-z0-9_-]+)|([A-Za-z0-9_.]{1,30})\/([A-Za-z0-9_-]{5,30}))\/?(?:\?.*)?$/;
 
-    function findLikeSvg(target) {
-      const svg = target.closest("svg[aria-label]");
-      if (!svg) return null;
-      return LIKE_LABELS.includes(svg.getAttribute("aria-label")) ? svg : null;
-    }
+    const looksLikeShortcode = (s) => /[0-9A-Z]/.test(s); // 真代碼幾乎必有大寫/數字；純小寫是頁尾導覽連結
 
-    // 真正的貼文代碼是打亂的 base64 風格字串，幾乎一定會出現大寫字母或數字；純小寫＋底線/連字號
-    // 的通常是人寫的頁面路徑（/accounts/meta_verified/、/legal/privacy/ 之類），藉此濾掉。
-    function looksLikeShortcode(s) {
-      return /[0-9A-Z]/.test(s);
-    }
-
-    // m[1] 分支（/p/、/reel/、/reels/）本來就是真的貼文類型，直接信；m[3] 分支是「猜出來」的帳號名，
-    // 還要順便擋掉頁尾導覽連結（/legal/privacy/ 這種）跟保留字。
     function isValidPostMatch(m) {
       if (!m) return false;
       return !!(m[1] || (looksLikeShortcode(m[4]) && !RESERVED_PATHS.has(m[3].toLowerCase())));
@@ -179,14 +147,10 @@
       return null;
     }
 
-    // 貼文作者的頭像連結跟帳號名稱連結會連續出現兩次、指向同一個網址（頭貼一次、文字一次），
-    // 留言者/推薦帳號通常只出現一次——用這個特徵抓到「真正的作者」，不會被其他連結誤導。
-    // 網址第一段就是帳號名，不管後面有沒有接 /reels/ 之類的子頁面（Reels 版面的作者連結長這樣）都算。
-    // 實測驗證過：套用在真實貼文/Reels 上正確抓到作者，不是第一個出現的帳號連結。
+    // 作者的頭像＋帳號名連結會連續出現兩次指向同一網址；留言者/推薦帳號通常只出現一次，藉此分辨。
     function extractAuthor(container) {
       const candidates = [...container.querySelectorAll('a[href^="/"]')]
-        .map((a) => a.getAttribute("href"))
-        .map((href) => href && href.match(/^\/([A-Za-z0-9_.]{1,30})(?:\/|$)/))
+        .map((a) => a.getAttribute("href")?.match(/^\/([A-Za-z0-9_.]{1,30})(?:\/|$)/))
         .filter((m) => m && !RESERVED_PATHS.has(m[1].toLowerCase()))
         .map((m) => m[1]);
       for (let i = 0; i < candidates.length - 1; i++) {
@@ -195,21 +159,17 @@
       return candidates[0] || null;
     }
 
-    // 滑動瀏覽 Reels 時，內文疊在影片上是包在「closed」模式的 Shadow DOM 裡，這種連程式都讀不到，
-    // 不是等久一點能解決的。改用背景請求打貼文自己的網址，讀伺服器回應 HTML 裡的 og:description
-    // 標籤——那裡面就有完整內文（含全部 hashtag），不受 Shadow DOM、渲染時機影響，一般貼文也適用。
-    function decodeHtmlEntities(str) {
-      const el = document.createElement("textarea");
-      el.innerHTML = str;
-      return el.value;
-    }
-
+    // Reels 滑動瀏覽時內文疊在影片上、藏在讀不到的 closed Shadow DOM 裡——改打貼文自己的網址，
+    // 讀伺服器 HTML 的 og:description 標籤，內文+ hashtag 都在裡面，不受畫面渲染狀態影響。
     function fetchCaption(url, cb) {
       fetch(url, { credentials: "include" })
         .then((r) => r.text())
         .then((html) => {
           const m = html.match(/<meta property="og:description" content="([^"]*)"/);
-          cb(m ? decodeHtmlEntities(m[1]) : "");
+          if (!m) return cb("");
+          const ta = document.createElement("textarea");
+          ta.innerHTML = m[1];
+          cb(ta.value);
         })
         .catch((e) => {
           console.error("[抓圖收藏][IG] 抓內文失敗", e);
@@ -220,53 +180,34 @@
     document.addEventListener(
       "click",
       (ev) => {
-        const svg = findLikeSvg(ev.target);
-        if (!svg) return;
+        const svg = ev.target.closest("svg[aria-label]");
+        if (!svg || !LIKE_LABELS.includes(svg.getAttribute("aria-label"))) return;
 
-        // 如果現在就是在瀏覽單篇貼文頁面（網址列本身就是貼文連結），直接信任網址列——
-        // 比去 DOM 裡找連結準得多，且不會有往上爬過頭誤抓到頁尾連結的問題。
+        // 網址列本身就是貼文連結時直接信任它，比爬 DOM 準，也不會爬過頭誤抓頁尾連結。
         const urlMatch = location.href.match(POST_LINK_RE);
         const onPostPage = isValidPostMatch(urlMatch) ? urlMatch : null;
         const container = onPostPage ? document : findPostContainer(svg);
-        if (!container) {
-          console.log("[抓圖收藏][IG] 找不到貼文容器，略過（選擇器可能要調整）");
-          return;
-        }
-
-        const m = onPostPage || findPostLink(container);
-        if (!m) {
-          console.log("[抓圖收藏][IG] 找不到貼文連結，略過（選擇器可能要調整）");
-          return;
-        }
+        const m = container && (onPostPage || findPostLink(container));
+        if (!m) return console.log("[抓圖收藏][IG] 找不到貼文連結，略過（選擇器可能要調整）");
 
         let url, author, isReel;
         if (m[1]) {
-          const type = m[1] === "reels" ? "reel" : m[1]; // 存成單數，跟後端 /collect 認得的格式一致，兩種網址其實通用
+          const type = m[1] === "reels" ? "reel" : m[1]; // 統一存單數，跟後端格式一致，兩種網址其實通用
           url = `https://www.instagram.com/${type}/${m[2]}/`;
           author = extractAuthor(container);
           isReel = type === "reel";
         } else {
-          url = `https://www.instagram.com/p/${m[4]}/`; // 統一存成正規的 /p/ 格式，跟帳號名脫鉤
+          url = `https://www.instagram.com/p/${m[4]}/`;
           author = m[3];
-          isReel = false;
         }
-        // Reel 一定是影片，不用靠 DOM 判斷（滑動模式下 <video> 標籤也在同一個 Shadow DOM 裡找不到）。
-        const mediaType = isReel || container.querySelector("video") ? "video" : "photo";
-
-        if (!url || !author) {
-          console.log("[抓圖收藏][IG] 抓不到網址或帳號，略過（選擇器可能要調整）");
-          return;
-        }
+        if (!author) return console.log("[抓圖收藏][IG] 抓不到帳號，略過（選擇器可能要調整）");
+        const mediaType = isReel || container.querySelector("video") ? "video" : "photo"; // Reel 必是影片
 
         fetchCaption(url, (text) => {
           console.log("[抓圖收藏][IG] 偵測到讚", { url, author, mediaType, textPreview: text.slice(0, 30) });
-
           loadHashtags((tags) => {
             const chars = matchedCharacters(text, tags);
-            if (chars.length === 0) {
-              console.log("[抓圖收藏][IG] 沒對到任何角色關鍵字，略過", text);
-              return;
-            }
+            if (chars.length === 0) return console.log("[抓圖收藏][IG] 沒對到任何角色關鍵字，略過", text);
             submitCollect("[抓圖收藏][IG]", { url, author, text, mediaType, chars });
           });
         });
