@@ -198,7 +198,7 @@ def interactions():
         if not pool:
             return jsonify({
                 "type": 4,
-                "data": {"content": f"「{character}」的{media_type}收藏是空的，去 X 上點幾個愛心吧（見 likewatcher.user.js）。"},
+                "data": {"content": f"「{character}」的{media_type}收藏是空的，去 X、FB、IG 上點幾個愛心吧。"},
             })
 
         entry = random.choice(pool)
