@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         抓圖 Bot - X/IG/FB 按讚自動蒐集
 // @namespace    ponytail
-// @version      3.7
+// @version      3.8
 // @description  在 X、Instagram 或 Facebook 按讚符合角色 Hashtag 的貼文時，自動送去自己的 Discord 機器人後端收藏；X 上轉推則彈出輸入框手動指定角色
 // @match        https://x.com/*
 // @match        https://twitter.com/*
@@ -246,11 +246,32 @@
 
     // 手動收藏：轉推當成「我確定要收藏這個」的手動觸發，跟讚那條自動判斷 hashtag 的路徑各自獨立、
     // 互不影響——貼文沒下 hashtag 或關鍵字沒登記過也能收，直接自己指定要進哪個角色的收藏。
-    // 借用 /collect 既有的 hashtag 比對機制：把 text 組成「#角色的第一個關鍵字」送出去，後端自然就
-    // 會比對成功存進正確的角色，不用另外開一支後端 API。
-    // ⚠️ retweetConfirm 這個 testid 沒實測過，X 的轉推要點一次圖示跳出選單、再點一次「轉推」確認才
-    // 算數，如果點了選單裡的轉推卻沒反應，開 Console 看有沒有印出「偵測到轉推」那行來判斷是哪一步錯。
+    // 借用 /collect 既有的 hashtag 比對機制：把 text 組成每個角色「#第一個關鍵字」串起來一次送出
+    // 去，後端自然就會各自比對成功、一次存進所有指定角色，不用另外開一支後端 API、也不用送好幾次。
     let pendingRetweetArticle = null;
+
+    // 輸入可以一次填好幾個角色，中間用空格或任何標點隔開就好（例如「漂泊者 愛彌斯」）——先用空格/標點
+    // 切成一串詞，再從最長的組合開始比對已知角色名，比對到就吃掉那幾個詞、繼續往後找。這樣「Mori
+    // Calliope」這種名字本身帶空格的角色也不會被誤切開（兩個詞合起來比對得到，就不會拆成兩個角色）。
+    function parseCharacterNames(input, tags) {
+      const tokens = input.split(/[\s,，、。.\/·・;；:：]+/).filter(Boolean);
+      const names = [];
+      const unknown = [];
+      for (let i = 0; i < tokens.length; ) {
+        let matchLen = 0;
+        for (let len = tokens.length - i; len >= 1; len--) {
+          if (tags[tokens.slice(i, i + len).join(" ")]) { matchLen = len; break; }
+        }
+        if (matchLen) {
+          names.push(tokens.slice(i, i + matchLen).join(" "));
+          i += matchLen;
+        } else {
+          unknown.push(tokens[i]);
+          i += 1;
+        }
+      }
+      return { names, unknown };
+    }
 
     function promptManualAdd(article, tags) {
       const mediaType = detectMediaType(article);
@@ -259,12 +280,15 @@
       const link = extractTweetLink(article);
       if (!link) return alert("抓不到這則貼文的連結，無法加入收藏（選擇器可能要調整）。");
 
-      const name = prompt("轉推收藏——輸入角色名稱（要跟 hashtags.json 裡的名字完全一樣）：")?.trim();
-      if (!name) return;
-      if (!tags[name]) return alert(`找不到角色「${name}」，請確認拼字跟 hashtags.json 一致。`);
+      const input = prompt("轉推收藏——輸入角色名稱（可空格/標點分隔多個，例如「漂泊者 愛彌斯」，要跟 hashtags.json 一致）：")?.trim();
+      if (!input) return;
 
-      const keyword = tags[name][0].replace(/^#/, "");
-      submitCollect("[抓圖收藏][轉推]", { url: link.url, author: link.author, text: `#${keyword}`, mediaType, chars: [name] });
+      const { names, unknown } = parseCharacterNames(input, tags);
+      if (unknown.length) alert(`以下沒對到已知角色，已略過：${unknown.join("、")}`);
+      if (!names.length) return;
+
+      const text = names.map((name) => `#${tags[name][0].replace(/^#/, "")}`).join(" ");
+      submitCollect("[抓圖收藏][轉推]", { url: link.url, author: link.author, text, mediaType, chars: names });
     }
 
     document.addEventListener(
