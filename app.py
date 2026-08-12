@@ -115,13 +115,18 @@ def save_collected(data):
 
 
 def fix_embed_url(url):
-    # vxtwitter.com / kkinstagram.com are free public proxies that redirect straight to the
-    # real media file so Discord actually embeds the image/video inline (the real domains
-    # don't unfurl reliably there). kkinstagram picked over ddinstagram — the latter 403s now.
+    # vxtwitter.com / kkinstagram.com / facebed.com are free public proxies that redirect
+    # straight to the real media file so Discord actually embeds the image/video inline (the
+    # real domains don't unfurl reliably there). kkinstagram picked over ddinstagram — the
+    # latter 403s now. facebed confirmed live: Facebook serves a real og:image to it but shows
+    # an unauthenticated Discordbot request a "log in to view" wall on facebook.com directly —
+    # this isn't a privacy-setting thing, Meta specifically blocks Discord's own crawler.
     if url.startswith("https://x.com/") or url.startswith("https://twitter.com/"):
         return url.replace("https://x.com/", "https://vxtwitter.com/").replace("https://twitter.com/", "https://vxtwitter.com/")
     if url.startswith("https://instagram.com/") or url.startswith("https://www.instagram.com/"):
         return url.replace("https://www.instagram.com/", "https://kkinstagram.com/").replace("https://instagram.com/", "https://kkinstagram.com/")
+    if url.startswith("https://facebook.com/") or url.startswith("https://www.facebook.com/"):
+        return url.replace("https://www.facebook.com/", "https://facebed.com/").replace("https://facebook.com/", "https://facebed.com/")
     return url
 
 
