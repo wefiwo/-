@@ -25,7 +25,7 @@ class TestCollect(unittest.TestCase):
         self._real_hashtags_pinyin = app_module.HASHTAGS_PINYIN
         self._real_hashtags_bopomofo = app_module.HASHTAGS_BOPOMOFO
         app_module.HASHTAGS = {
-            "秧秧": ["YangyangXuanling"], "長離": ["Changli"],
+            "秧秧": ["YangyangXuanling"], "長離": ["Changli"], "達妮婭": ["Denia"],
             "金城": ["Jincheng"], "景然": ["Jingran"], "瑾軒": ["Jinxuan"],
         }
         app_module.HASHTAGS_PINYIN = app_module.build_pinyin_table(app_module.HASHTAGS)
@@ -167,6 +167,13 @@ class TestCollect(unittest.TestCase):
         # 長 is polyphonic (cháng vs zhǎng); pypinyin defaults to zhǎng here without the override
         # registered in app.py, which would break matching on "常" (cháng)-sounding homophones.
         self.assertIn("長離", app_module.autocomplete_matches("常"))
+
+    def test_autocomplete_ni_reading_override(self):
+        # pypinyin's dictionary default for 妮 is nī, but nobody actually says it that way in these
+        # character names — everyone reads/types it as ní (same as 尼/泥), so it needs the same kind
+        # of override as 長離's heteronym fix above.
+        self.assertIn("達妮婭", app_module.autocomplete_matches("尼"))
+        self.assertIn("達妮婭", app_module.autocomplete_matches("泥"))
 
     def test_autocomplete_matches_exact_syllable_not_prefix(self):
         # jīn (金) shouldn't match jǐng (景然) just because the string "jin" happens to be a

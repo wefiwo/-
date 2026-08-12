@@ -19,9 +19,10 @@ from nacl.exceptions import BadSignatureError
 from nacl.signing import VerifyKey
 from pypinyin import Style, load_phrases_dict, lazy_pinyin
 
-# pypinyin 猜多音字有時會猜錯（例如把「長離」的長讀成首長的 zhǎng，不是角色實際唸法 cháng）——
-# 這裡手動修正遇到的個案，之後同音字比對又抓錯哪個角色再往這裡加一行就好。
-load_phrases_dict({"長離": [["cháng"], ["lí"]]})
+# pypinyin 的字典有時跟大家實際唸法對不上——「長離」的長預設猜成首長的 zhǎng，不是角色實際唸法
+# cháng；「妮」字典預設是 nī，但沒人這樣唸，「達妮婭」「贊妮」這些名字裡大家都唸 ní。這裡手動修正
+# 遇到的個案，之後同音字比對又抓錯哪個角色再往這裡加一行就好。
+load_phrases_dict({"長離": [["cháng"], ["lí"]], "妮": [["ní"]]})
 
 load_dotenv()
 
