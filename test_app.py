@@ -28,13 +28,8 @@ class TestCollect(unittest.TestCase):
             "秧秧": ["YangyangXuanling"], "長離": ["Changli"],
             "金城": ["Jincheng"], "景然": ["Jingran"], "瑾軒": ["Jinxuan"],
         }
-        app_module.HASHTAGS_PINYIN = {
-            name: app_module.lazy_pinyin(name, style=app_module.Style.TONE) for name in app_module.HASHTAGS
-        }
-        app_module.HASHTAGS_BOPOMOFO = {
-            name: "".join(app_module.lazy_pinyin(name, style=app_module.Style.BOPOMOFO)).translate(app_module._BOPOMOFO_TONE_MARKS)
-            for name in app_module.HASHTAGS
-        }
+        app_module.HASHTAGS_PINYIN = app_module.build_pinyin_table(app_module.HASHTAGS)
+        app_module.HASHTAGS_BOPOMOFO = app_module.build_bopomofo_table(app_module.HASHTAGS)
         self.addCleanup(self._restore)
 
     def _restore(self):

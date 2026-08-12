@@ -62,21 +62,32 @@ UPSTASH_TOKEN = os.environ.get("UPSTASH_REDIS_REST_TOKEN", "")
 with open(HASHTAGS_PATH, encoding="utf-8") as f:
     HASHTAGS = {k: (v if isinstance(v, list) else [v]) for k, v in json.load(f).items() if not k.startswith("_")}
 
-# 拼音查一次存起來，同音字（碎/歲/穗都唸 sui，聲調也一樣）autocomplete 才找得到，不用每次打字都重
-# 轉換。存成音節清單而不是直接拼接字串，比對時才不會把 jin 誤判成 jing 的前綴（兩個不同音節，拼起來
-# 字串上卻剛好一個是另一個的子字串）。帶聲調（Style.TONE）比對，同音不同調（金 jīn vs 瑾 jǐn）才不會
-# 互相誤判——純 ASCII 查詢（沒有調號可標）不受影響，一樣照原樣比對。
-HASHTAGS_PINYIN = {name: lazy_pinyin(name, style=Style.TONE) for name in HASHTAGS}
+# 拼音/注音查一次存起來，同音字（碎/歲/穗都唸 sui，聲調也一樣）autocomplete 才找得到，不用每次打字
+# 都重轉換——build_pinyin_table/build_bopomofo_table 也是 test_app.py 重建這兩張表時共用的那份，
+# 兩邊各寫一份會不小心不同步。
+_BOPOMOFO_TONE_MARKS = str.maketrans("", "", "ˊˇˋ˙")
+
+
+def build_pinyin_table(names):
+    # 存成音節清單而不是直接拼接字串，比對時才不會把 jin 誤判成 jing 的前綴（兩個不同音節，拼起來
+    # 字串上卻剛好一個是另一個的子字串）。帶聲調（Style.TONE）比對，同音不同調（金 jīn vs 瑾 jǐn）
+    # 才不會互相誤判——純 ASCII 查詢（沒有調號可標）不受影響，一樣照原樣比對。
+    return {name: lazy_pinyin(name, style=Style.TONE) for name in names}
+
+
+def build_bopomofo_table(names):
+    # 注音同理：Discord 的輸入框有時接不到注音輸入法的選字視窗，打到一半會直接送出還沒選字的注音符號
+    # （例如打「金」只送出 ㄐㄧㄣ），所以也比照拼音做成同音字對照表。聲調符號略過比較——沒選字的話
+    # 通常連聲調鍵都還沒按。
+    return {name: "".join(lazy_pinyin(name, style=Style.BOPOMOFO)).translate(_BOPOMOFO_TONE_MARKS) for name in names}
+
+
+HASHTAGS_PINYIN = build_pinyin_table(HASHTAGS)
+HASHTAGS_BOPOMOFO = build_bopomofo_table(HASHTAGS)
 
 
 def _contains_syllables(needle, haystack):
     return any(haystack[i:i + len(needle)] == needle for i in range(len(haystack) - len(needle) + 1))
-
-# 注音同理：Discord 的輸入框有時接不到注音輸入法的選字視窗，打到一半會直接送出還沒選字的注音符號
-# （例如打「金」只送出 ㄐㄧㄣ），所以也比照拼音做成同音字對照表。聲調符號略過比較——沒選字的話通常
-# 連聲調鍵都還沒按。
-_BOPOMOFO_TONE_MARKS = str.maketrans("", "", "ˊˇˋ˙")
-HASHTAGS_BOPOMOFO = {name: "".join(lazy_pinyin(name, style=Style.BOPOMOFO)).translate(_BOPOMOFO_TONE_MARKS) for name in HASHTAGS}
 
 
 def autocomplete_matches(query):
@@ -114,19 +125,26 @@ def save_collected(data):
         f.write(payload)
 
 
+# vxtwitter.com / kkinstagram.com / facebed.com are free public proxies that redirect straight
+# to the real media file so Discord actually embeds the image/video inline (the real domains
+# don't unfurl reliably there). kkinstagram picked over ddinstagram — the latter 403s now.
+# facebed confirmed live: Facebook serves a real og:image to it but shows an unauthenticated
+# Discordbot request a "log in to view" wall on facebook.com directly — this isn't a
+# privacy-setting thing, Meta specifically blocks Discord's own crawler.
+EMBED_PROXIES = {
+    "https://x.com/": "https://vxtwitter.com/",
+    "https://twitter.com/": "https://vxtwitter.com/",
+    "https://www.instagram.com/": "https://kkinstagram.com/",
+    "https://instagram.com/": "https://kkinstagram.com/",
+    "https://www.facebook.com/": "https://facebed.com/",
+    "https://facebook.com/": "https://facebed.com/",
+}
+
+
 def fix_embed_url(url):
-    # vxtwitter.com / kkinstagram.com / facebed.com are free public proxies that redirect
-    # straight to the real media file so Discord actually embeds the image/video inline (the
-    # real domains don't unfurl reliably there). kkinstagram picked over ddinstagram — the
-    # latter 403s now. facebed confirmed live: Facebook serves a real og:image to it but shows
-    # an unauthenticated Discordbot request a "log in to view" wall on facebook.com directly —
-    # this isn't a privacy-setting thing, Meta specifically blocks Discord's own crawler.
-    if url.startswith("https://x.com/") or url.startswith("https://twitter.com/"):
-        return url.replace("https://x.com/", "https://vxtwitter.com/").replace("https://twitter.com/", "https://vxtwitter.com/")
-    if url.startswith("https://instagram.com/") or url.startswith("https://www.instagram.com/"):
-        return url.replace("https://www.instagram.com/", "https://kkinstagram.com/").replace("https://instagram.com/", "https://kkinstagram.com/")
-    if url.startswith("https://facebook.com/") or url.startswith("https://www.facebook.com/"):
-        return url.replace("https://www.facebook.com/", "https://facebed.com/").replace("https://facebook.com/", "https://facebed.com/")
+    for prefix, proxy in EMBED_PROXIES.items():
+        if url.startswith(prefix):
+            return proxy + url[len(prefix):]
     return url
 
 

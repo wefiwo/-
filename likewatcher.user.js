@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         抓圖 Bot - X/IG/FB 按讚自動蒐集
 // @namespace    ponytail
-// @version      3.4
+// @version      3.5
 // @description  在 X、Instagram 或 Facebook 按讚符合角色 Hashtag 的貼文時，自動送去自己的 Discord 機器人後端收藏
 // @match        https://x.com/*
 // @match        https://twitter.com/*
@@ -84,6 +84,35 @@
     });
   }
 
+  // 三個平台都要「從點擊處往上爬找一個包住貼文連結的容器」「一堆候選連結裡挑第一個連續重複出現的當
+  // 作者」「在容器裡找文字符合某些詞組的按鈕」——抽出來共用，不必三份幾乎一樣的迴圈。
+  function climbForContainer(el, findLink, isBest) {
+    let node = el.parentElement;
+    let fallback = null;
+    for (let i = 0; i < 25 && node; i++, node = node.parentElement) {
+      const m = findLink(node);
+      if (!m) continue;
+      if (isBest(m)) return node;
+      if (!fallback) fallback = node; // 記住第一個堪用的當退路，繼續往上找有沒有更好的
+    }
+    return fallback;
+  }
+
+  function firstDuplicateAdjacent(candidates) {
+    for (let i = 0; i < candidates.length - 1; i++) {
+      if (candidates[i] === candidates[i + 1]) return candidates[i];
+    }
+    return candidates[0] || null;
+  }
+
+  function findButtonByText(container, phrases) {
+    for (const el of container.querySelectorAll('[role="button"]')) {
+      const t = el.innerText?.trim();
+      if (t && phrases.some((p) => t === p || t.includes(p))) return el;
+    }
+    return null;
+  }
+
   const isInstagram = /(^|\.)instagram\.com$/.test(location.hostname);
   const isFacebook = /(^|\.)facebook\.com$/.test(location.hostname);
 
@@ -93,7 +122,8 @@
     // 除錯方式（開 Console 看有沒有印出「找不到」的訊息，貼過來調整）重新調整過才會穩定動作。
     // 網址只認得 app.py 那邊也接受的四種形狀（個人/粉專貼文、reel、單張照片、社團貼文），跟後端保持
     // 一致，免得抓到了卻被 /collect 退回。
-    const LIKE_LABELS = ["讚", "Like"];
+    // 不只單純的讚——長按/點開表情選單直接點大心、哈等其他反應一樣算數。
+    const REACTION_LABELS = ["讚", "Like", "大心", "Love", "哈", "Haha", "哇", "Wow", "難過", "Sad", "怒", "Angry", "關心", "Care"];
     const RESERVED_PATHS = new Set([
       "photo", "photos", "videos", "posts", "reel", "reels", "watch", "groups", "marketplace",
       "gaming", "live", "events", "pages", "people", "hashtag", "help", "settings", "profile.php",
@@ -116,15 +146,7 @@
     }
 
     function findPostContainer(el) {
-      let node = el.parentElement;
-      let fallbackContainer = null;
-      for (let i = 0; i < 25 && node; i++, node = node.parentElement) {
-        const m = findPostLink(node);
-        if (!m) continue;
-        if (m[1]) return node; // 找到帶帳號的連結就直接用這層，不用再往上爬
-        if (!fallbackContainer) fallbackContainer = node; // 記住第一個退路，繼續往上爬看有沒有更好的
-      }
-      return fallbackContainer;
+      return climbForContainer(el, findPostLink, (m) => !!m[1]); // m[1] = 帶帳號的連結，找到就不用再往上爬
     }
 
     // 作者的頭像＋姓名連結通常連續出現兩次指向同一個人；跟 IG 用同一招分辨作者跟留言者/推薦帳號。
@@ -134,10 +156,7 @@
         .map((a) => a.getAttribute("href")?.match(/^(?:https:\/\/(?:www\.)?facebook\.com)?\/(?:groups\/[A-Za-z0-9_.]{1,50}\/user\/([A-Za-z0-9.]{1,50})|([A-Za-z0-9.]{5,50}))(?:\/|\?|$)/))
         .filter((m) => m && !RESERVED_PATHS.has((m[1] || m[2]).toLowerCase()))
         .map((m) => m[1] || m[2]);
-      for (let i = 0; i < candidates.length - 1; i++) {
-        if (candidates[i] === candidates[i + 1]) return candidates[i];
-      }
-      return candidates[0] || null;
+      return firstDuplicateAdjacent(candidates);
     }
 
     // 一開始學 IG 用「抓貼文自己網址的 og:description」讀內文，結果 FB 的 /photo/?fbid= 這種
@@ -146,16 +165,8 @@
     // 被截斷成「...查看更多」，跟 X 的「顯示原文」是同一招：先點開再讀。
     const SEE_MORE_PHRASES = ["查看更多", "顯示更多", "See more", "もっと見る", "더 보기"];
 
-    function findSeeMoreButton(container) {
-      for (const el of container.querySelectorAll('[role="button"]')) {
-        const t = el.innerText?.trim();
-        if (t && SEE_MORE_PHRASES.some((p) => t === p || t.includes(p))) return el;
-      }
-      return null;
-    }
-
     function readCaption(container, cb) {
-      const seeMoreBtn = findSeeMoreButton(container);
+      const seeMoreBtn = findButtonByText(container, SEE_MORE_PHRASES);
       if (!seeMoreBtn) return cb(container.innerText || "");
       seeMoreBtn.click();
       setTimeout(() => cb(container.innerText || ""), 300);
@@ -168,9 +179,9 @@
         const btn = ev.target.closest('[role="button"][aria-label]');
         const label = svg?.getAttribute("aria-label") || btn?.getAttribute("aria-label");
         if (!label) return;
-        // 除錯用：先看看點到的東西 aria-label 到底是什麼字——LIKE_LABELS 這個猜測清單如果跟 FB
-        // 實際用的字不一樣，選對真正的讚按鈕之前這行印出來的內容就是唯一的線索。
-        if (!LIKE_LABELS.includes(label)) return console.log("[抓圖收藏][FB] 點到帶 aria-label 的東西但不是讚，略過：", label);
+        // 除錯用：先看看點到的東西 aria-label 到底是什麼字——REACTION_LABELS 這個猜測清單如果跟
+        // FB 實際用的字不一樣，選對真正的反應按鈕之前這行印出來的內容就是唯一的線索。
+        if (!REACTION_LABELS.includes(label)) return console.log("[抓圖收藏][FB] 點到帶 aria-label 的東西但不是讚/表情反應，略過：", label);
 
         const container = findPostContainer(ev.target);
         const m = container && findPostLink(container);
@@ -216,21 +227,13 @@
     const SHOW_ORIGINAL_PHRASES = ["顯示原文", "显示原文", "Show original", "元のツイートを表示", "번역 전 표시", "원문 보기"];
     const SHOW_TRANSLATION_PHRASES = ["顯示翻譯", "显示翻译", "Show translation", "翻訳を表示", "번역 보기"];
 
-    function findButtonByPhrases(article, phrases) {
-      for (const el of article.querySelectorAll('[role="button"]')) {
-        const t = el.innerText?.trim();
-        if (t && phrases.some((p) => t === p || t.includes(p))) return el;
-      }
-      return null;
-    }
-
     function readOriginalText(article, cb) {
-      const showOriginalBtn = findButtonByPhrases(article, SHOW_ORIGINAL_PHRASES);
+      const showOriginalBtn = findButtonByText(article, SHOW_ORIGINAL_PHRASES);
       if (!showOriginalBtn) return cb(article.querySelector('[data-testid="tweetText"]')?.innerText || "");
       showOriginalBtn.click();
       setTimeout(() => {
         const text = article.querySelector('[data-testid="tweetText"]')?.innerText || "";
-        findButtonByPhrases(article, SHOW_TRANSLATION_PHRASES)?.click();
+        findButtonByText(article, SHOW_TRANSLATION_PHRASES)?.click();
         cb(text);
       }, 500);
     }
@@ -285,11 +288,7 @@
     }
 
     function findPostContainer(el) {
-      let node = el.parentElement;
-      for (let i = 0; i < 25 && node; i++, node = node.parentElement) {
-        if (findPostLink(node)) return node;
-      }
-      return null;
+      return climbForContainer(el, findPostLink, () => true); // findPostLink 自己已經篩過有效連結，找到就算數
     }
 
     // 作者的頭像＋帳號名連結會連續出現兩次指向同一網址；留言者/推薦帳號通常只出現一次，藉此分辨。
@@ -298,10 +297,7 @@
         .map((a) => a.getAttribute("href")?.match(/^\/([A-Za-z0-9_.]{1,30})(?:\/|$)/))
         .filter((m) => m && !RESERVED_PATHS.has(m[1].toLowerCase()))
         .map((m) => m[1]);
-      for (let i = 0; i < candidates.length - 1; i++) {
-        if (candidates[i] === candidates[i + 1]) return candidates[i];
-      }
-      return candidates[0] || null;
+      return firstDuplicateAdjacent(candidates);
     }
 
     // Reels 滑動瀏覽時內文疊在影片上、藏在讀不到的 closed Shadow DOM 裡，<video> 標籤也一樣摸不到、
