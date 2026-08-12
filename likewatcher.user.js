@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         抓圖 Bot - X/IG/FB 按讚自動蒐集
 // @namespace    ponytail
-// @version      3.1
+// @version      3.2
 // @description  在 X、Instagram 或 Facebook 按讚符合角色 Hashtag 的貼文時，自動送去自己的 Discord 機器人後端收藏
 // @match        https://x.com/*
 // @match        https://twitter.com/*
@@ -152,7 +152,10 @@
         const svg = ev.target.closest("svg[aria-label]");
         const btn = ev.target.closest('[role="button"][aria-label]');
         const label = svg?.getAttribute("aria-label") || btn?.getAttribute("aria-label");
-        if (!label || !LIKE_LABELS.includes(label)) return;
+        if (!label) return;
+        // 除錯用：先看看點到的東西 aria-label 到底是什麼字——LIKE_LABELS 這個猜測清單如果跟 FB
+        // 實際用的字不一樣，選對真正的讚按鈕之前這行印出來的內容就是唯一的線索。
+        if (!LIKE_LABELS.includes(label)) return console.log("[抓圖收藏][FB] 點到帶 aria-label 的東西但不是讚，略過：", label);
 
         const container = findPostContainer(ev.target);
         const m = container && findPostLink(container);
