@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         抓圖 Bot - X/IG/FB 按讚自動蒐集
 // @namespace    ponytail
-// @version      3.2
+// @version      3.3
 // @description  在 X、Instagram 或 Facebook 按讚符合角色 Hashtag 的貼文時，自動送去自己的 Discord 機器人後端收藏
 // @match        https://x.com/*
 // @match        https://twitter.com/*
@@ -97,24 +97,34 @@
     const RESERVED_PATHS = new Set([
       "photo", "photos", "videos", "posts", "reel", "reels", "watch", "groups", "marketplace",
       "gaming", "live", "events", "pages", "people", "hashtag", "help", "settings", "profile.php",
-      "permalink.php", "story.php", "login", "home.php", "messages", "notifications",
+      "permalink.php", "story.php", "stories", "login", "home.php", "messages", "notifications",
     ]);
     const POST_LINK_RE = /^https:\/\/(?:www\.|m\.)?facebook\.com\/(?:([A-Za-z0-9.]{5,50})\/(posts|videos)\/([A-Za-z0-9]+)|reel\/(\d+)|photo\/?\?fbid=(\d+)|groups\/([A-Za-z0-9_.]{1,50})\/(posts|permalink)\/([A-Za-z0-9]+))/;
 
+    // 同一則貼文的縮圖（photo/?fbid=）常常比貼文本身的永久連結（帶帳號的 posts/videos）離讚按鈕更
+    // 近，先找到的容器很容易只包到縮圖、包不到貼文標頭——優先選帶帳號的連結（m[1]），因為它同時給得
+    // 出作者、也是唯一保證讀得到完整內文的形狀；沒有的話才退而求其次用 reel/photo/group 這些。
     function findPostLink(root) {
+      let fallback = null;
       for (const a of root.querySelectorAll("a[href]")) {
         const m = a.href.match(POST_LINK_RE);
-        if (m) return m;
+        if (!m) continue;
+        if (m[1]) return m;
+        if (!fallback) fallback = m;
       }
-      return null;
+      return fallback;
     }
 
     function findPostContainer(el) {
       let node = el.parentElement;
+      let fallbackContainer = null;
       for (let i = 0; i < 25 && node; i++, node = node.parentElement) {
-        if (findPostLink(node)) return node;
+        const m = findPostLink(node);
+        if (!m) continue;
+        if (m[1]) return node; // 找到帶帳號的連結就直接用這層，不用再往上爬
+        if (!fallbackContainer) fallbackContainer = node; // 記住第一個退路，繼續往上爬看有沒有更好的
       }
-      return null;
+      return fallbackContainer;
     }
 
     // 作者的頭像＋姓名連結通常連續出現兩次指向同一個人；跟 IG 用同一招分辨作者跟留言者/推薦帳號。
