@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         抓圖 Bot - X/IG/FB 按讚自動蒐集
 // @namespace    ponytail
-// @version      3.6
+// @version      3.7
 // @description  在 X、Instagram 或 Facebook 按讚符合角色 Hashtag 的貼文時，自動送去自己的 Discord 機器人後端收藏；X 上轉推則彈出輸入框手動指定角色
 // @match        https://x.com/*
 // @match        https://twitter.com/*
@@ -256,16 +256,15 @@
       const mediaType = detectMediaType(article);
       if (!mediaType) return alert("這則貼文沒偵測到圖片或影片，無法加入收藏。");
 
+      const link = extractTweetLink(article);
+      if (!link) return alert("抓不到這則貼文的連結，無法加入收藏（選擇器可能要調整）。");
+
       const name = prompt("轉推收藏——輸入角色名稱（要跟 hashtags.json 裡的名字完全一樣）：")?.trim();
       if (!name) return;
       if (!tags[name]) return alert(`找不到角色「${name}」，請確認拼字跟 hashtags.json 一致。`);
 
-      const link = extractTweetLink(article);
-      const url = prompt("貼文連結：", link?.url || "")?.trim();
-      if (!url) return;
-
       const keyword = tags[name][0].replace(/^#/, "");
-      submitCollect("[抓圖收藏][轉推]", { url, author: link?.author || "", text: `#${keyword}`, mediaType, chars: [name] });
+      submitCollect("[抓圖收藏][轉推]", { url: link.url, author: link.author, text: `#${keyword}`, mediaType, chars: [name] });
     }
 
     document.addEventListener(
