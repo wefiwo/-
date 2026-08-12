@@ -1,6 +1,6 @@
 # 抓圖 Discord Bot
 
-單一 Slash Command `/抓圖`（角色 autocomplete + 類型：圖片/影片），從**你自己在 X 按讚蒐集的收藏**裡隨機挑一則貼到 Discord，附上原推文連結與繪師帳號。User Install 架構，私訊、群組、伺服器都能用，不需要把 bot 拉進伺服器。
+單一 Slash Command `/抓圖`（角色 autocomplete + 類型：圖片/影片），從**你自己在 X／Instagram／Facebook 按讚蒐集的收藏**裡隨機挑一則貼到 Discord，附上原貼文連結與繪師帳號。User Install 架構，私訊、群組、伺服器都能用，不需要把 bot 拉進伺服器。
 
 ## 為什麼是「按讚蒐集」而不是即時搜尋全網？
 

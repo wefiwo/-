@@ -1,6 +1,6 @@
 """Discord HTTP-interactions bot: /抓圖 <角色> <類型> replies with a random post from your own collection.
 
-Media source: posts you like on X (and optionally Instagram) get auto-collected by a userscript
+Media source: posts you like on X, Instagram, or Facebook get auto-collected by a userscript
 (see likewatcher.user.js) that watches your own logged-in browser session — see README for why
 this replaces both the official X API (search needs a paid plan) and scraping (means bypassing
 X's anti-bot defenses, which this project won't do). Discord auto-embeds the link itself, no
@@ -39,6 +39,14 @@ APP_ID = os.environ.get("DISCORD_APPLICATION_ID") or requests.get(
 TWEET_URL_RE = re.compile(r"^https://(?:x|twitter)\.com/([A-Za-z0-9_]{1,15})/status/(\d+)$")
 INSTAGRAM_URL_RE = re.compile(r"^https://(?:www\.)?instagram\.com/(?:p|reel)/([A-Za-z0-9_-]+)/?$")
 INSTAGRAM_USERNAME_RE = re.compile(r"^[A-Za-z0-9_.]{1,30}$")
+
+# FB 貼文網址帶的追蹤參數（?__cft__[0]=...）長度不固定，故意不用 $ 錨定字串結尾，抓到需要的部分就好，
+# 尾巴不管。只認得下面三種形狀（個人/粉專貼文、影片、單張照片）——permalink.php／社團貼文先不處理，
+# 之後真的用得到再加一個 elif 就好。
+FACEBOOK_POST_RE = re.compile(r"^https://(?:www\.|m\.)?facebook\.com/(?P<user>[A-Za-z0-9.]{5,50})/(?P<kind>posts|videos)/(?P<id>[A-Za-z0-9]+)")
+FACEBOOK_REEL_RE = re.compile(r"^https://(?:www\.|m\.)?facebook\.com/reel/(?P<id>\d+)")
+FACEBOOK_PHOTO_RE = re.compile(r"^https://(?:www\.|m\.)?facebook\.com/photo/?\?fbid=(?P<id>\d+)")
+FACEBOOK_USERNAME_RE = re.compile(r"^[A-Za-z0-9.]{5,50}$")
 
 HASHTAGS_PATH = Path(__file__).parent / "hashtags.json"
 COLLECTED_PATH = Path(__file__).parent / "collected.json"
@@ -193,6 +201,9 @@ def collect():
 
     tweet_m = TWEET_URL_RE.match(raw_url)
     ig_m = INSTAGRAM_URL_RE.match(raw_url)
+    fb_post_m = FACEBOOK_POST_RE.match(raw_url)
+    fb_reel_m = FACEBOOK_REEL_RE.match(raw_url)
+    fb_photo_m = FACEBOOK_PHOTO_RE.match(raw_url)
     if tweet_m:
         # x.com/twitter.com embeds the author right in the URL — trust that, not the client's claim.
         url, author = tweet_m.group(0).replace("twitter.com", "x.com"), tweet_m.group(1)
@@ -202,8 +213,18 @@ def collect():
         url, author = ig_m.group(0), (body.get("author") or "").strip()
         if not INSTAGRAM_USERNAME_RE.match(author):
             abort(400)
+    elif fb_post_m:
+        # facebook.com/{user}/posts|videos/{id} embeds the author right in the URL too — trust that.
+        url = f"https://www.facebook.com/{fb_post_m['user']}/{fb_post_m['kind']}/{fb_post_m['id']}"
+        author = fb_post_m["user"]
+    elif fb_reel_m or fb_photo_m:
+        # Reel/photo URLs don't carry a username, same situation as Instagram above.
+        url = f"https://www.facebook.com/reel/{fb_reel_m['id']}" if fb_reel_m else f"https://www.facebook.com/photo/?fbid={fb_photo_m['id']}"
+        author = (body.get("author") or "").strip()
+        if not FACEBOOK_USERNAME_RE.match(author):
+            abort(400)
     else:
-        abort(400)  # reject anything that isn't actually a real x.com/twitter.com/instagram.com post link
+        abort(400)  # reject anything that isn't actually a real x.com/twitter.com/instagram.com/facebook.com post link
 
     lower_text = text.lower()
     matched = [name for name, tags in HASHTAGS.items() if any(t.lower() in lower_text for t in tags)]

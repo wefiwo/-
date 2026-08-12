@@ -1,12 +1,14 @@
 // ==UserScript==
-// @name         抓圖 Bot - X/IG 按讚自動蒐集
+// @name         抓圖 Bot - X/IG/FB 按讚自動蒐集
 // @namespace    ponytail
-// @version      3.0
-// @description  在 X 或 Instagram 按讚符合角色 Hashtag 的貼文時，自動送去自己的 Discord 機器人後端收藏
+// @version      3.1
+// @description  在 X、Instagram 或 Facebook 按讚符合角色 Hashtag 的貼文時，自動送去自己的 Discord 機器人後端收藏
 // @match        https://x.com/*
 // @match        https://twitter.com/*
 // @match        https://www.instagram.com/*
 // @match        https://instagram.com/*
+// @match        https://www.facebook.com/*
+// @match        https://facebook.com/*
 // @grant        GM_xmlhttpRequest
 // @grant        GM_setValue
 // @grant        GM_getValue
@@ -77,8 +79,103 @@
   }
 
   const isInstagram = /(^|\.)instagram\.com$/.test(location.hostname);
+  const isFacebook = /(^|\.)facebook\.com$/.test(location.hostname);
 
-  if (!isInstagram) {
+  if (isFacebook) {
+    // ───────────────────────── Facebook ─────────────────────────
+    // ⚠️ 沒有實測過（FB 沒有真人登入帳號可以測），下面的選擇器是憑經驗猜的，很可能要照 IG 當初的
+    // 除錯方式（開 Console 看有沒有印出「找不到」的訊息，貼過來調整）重新調整過才會穩定動作。
+    // 網址只認得 app.py 那邊也接受的三種形狀（個人/粉專貼文、reel、單張照片），跟後端保持一致，
+    // 免得抓到了卻被 /collect 退回。
+    const LIKE_LABELS = ["讚", "Like"];
+    const RESERVED_PATHS = new Set([
+      "photo", "photos", "videos", "posts", "reel", "reels", "watch", "groups", "marketplace",
+      "gaming", "live", "events", "pages", "people", "hashtag", "help", "settings", "profile.php",
+      "permalink.php", "story.php", "login", "home.php", "messages", "notifications",
+    ]);
+    const POST_LINK_RE = /^https:\/\/(?:www\.|m\.)?facebook\.com\/(?:([A-Za-z0-9.]{5,50})\/(posts|videos)\/([A-Za-z0-9]+)|reel\/(\d+)|photo\/?\?fbid=(\d+))/;
+
+    function findPostLink(root) {
+      for (const a of root.querySelectorAll("a[href]")) {
+        const m = a.href.match(POST_LINK_RE);
+        if (m) return m;
+      }
+      return null;
+    }
+
+    function findPostContainer(el) {
+      let node = el.parentElement;
+      for (let i = 0; i < 25 && node; i++, node = node.parentElement) {
+        if (findPostLink(node)) return node;
+      }
+      return null;
+    }
+
+    // 作者的頭像＋姓名連結通常連續出現兩次指向同一個人；跟 IG 用同一招分辨作者跟留言者/推薦帳號。
+    function extractAuthor(container) {
+      const candidates = [...container.querySelectorAll('a[href^="/"], a[href^="https://www.facebook.com/"]')]
+        .map((a) => a.getAttribute("href")?.match(/^(?:https:\/\/(?:www\.)?facebook\.com)?\/([A-Za-z0-9.]{5,50})(?:\/|\?|$)/))
+        .filter((m) => m && !RESERVED_PATHS.has(m[1].toLowerCase()))
+        .map((m) => m[1]);
+      for (let i = 0; i < candidates.length - 1; i++) {
+        if (candidates[i] === candidates[i + 1]) return candidates[i];
+      }
+      return candidates[0] || null;
+    }
+
+    function fetchPostInfo(url, container, cb) {
+      fetch(url, { credentials: "include" })
+        .then((r) => r.text())
+        .then((html) => {
+          const descM = html.match(/<meta property="og:description" content="([^"]*)"/);
+          const ta = document.createElement("textarea");
+          ta.innerHTML = descM ? descM[1] : "";
+          const mediaType = /\/(?:reel|videos)\//.test(url) ? "video" : container.querySelector("video") ? "video" : "photo";
+          cb({ text: ta.value, mediaType });
+        })
+        .catch((e) => {
+          console.error("[抓圖收藏][FB] 抓貼文資訊失敗", e);
+          cb({ text: "", mediaType: "photo" });
+        });
+    }
+
+    document.addEventListener(
+      "click",
+      (ev) => {
+        const svg = ev.target.closest("svg[aria-label]");
+        const btn = ev.target.closest('[role="button"][aria-label]');
+        const label = svg?.getAttribute("aria-label") || btn?.getAttribute("aria-label");
+        if (!label || !LIKE_LABELS.includes(label)) return;
+
+        const container = findPostContainer(ev.target);
+        const m = container && findPostLink(container);
+        if (!m) return console.log("[抓圖收藏][FB] 找不到貼文連結，略過（選擇器可能要調整，也可能是按到留言的讚）");
+
+        let url, author;
+        if (m[1]) {
+          url = `https://www.facebook.com/${m[1]}/${m[2]}/${m[3]}`;
+          author = m[1];
+        } else if (m[4]) {
+          url = `https://www.facebook.com/reel/${m[4]}`;
+          author = extractAuthor(container);
+        } else {
+          url = `https://www.facebook.com/photo/?fbid=${m[5]}`;
+          author = extractAuthor(container);
+        }
+        if (!author) return console.log("[抓圖收藏][FB] 抓不到帳號，略過（選擇器可能要調整）");
+
+        fetchPostInfo(url, container, ({ text, mediaType }) => {
+          console.log("[抓圖收藏][FB] 偵測到讚", { url, author, mediaType, textPreview: text.slice(0, 30) });
+          loadHashtags((tags) => {
+            const chars = matchedCharacters(text, tags);
+            if (chars.length === 0) return console.log("[抓圖收藏][FB] 沒對到任何角色關鍵字，略過", text);
+            submitCollect("[抓圖收藏][FB]", { url, author, text, mediaType, chars });
+          });
+        });
+      },
+      true
+    );
+  } else if (!isInstagram) {
     // ───────────────────────── X / Twitter ─────────────────────────
     function detectMediaType(article) {
       if (article.querySelector('[data-testid="videoPlayer"]')) return "video";

@@ -99,6 +99,38 @@ class TestCollect(unittest.TestCase):
         r = self.client.post("/collect", json=payload, headers={"X-Collect-Secret": "test-secret"})
         self.assertEqual(r.status_code, 400)
 
+    def test_collect_accepts_facebook_post_url_with_author_from_url(self):
+        payload = {
+            "url": "https://www.facebook.com/some.artist/posts/pfbid02abc123?__cft__[0]=xyz",
+            "author": "should-be-ignored",  # URL wins, same as X
+            "type": "photo",
+            "text": "#YangyangXuanling fanart",
+        }
+        r = self.client.post("/collect", json=payload, headers={"X-Collect-Secret": "test-secret"})
+        self.assertEqual(r.get_json()["added_to"], ["秧秧"])
+        self.assertEqual(app_module.load_collected()["秧秧"][0]["url"], "https://www.facebook.com/some.artist/posts/pfbid02abc123")
+        self.assertEqual(app_module.load_collected()["秧秧"][0]["author"], "some.artist")
+
+    def test_collect_accepts_facebook_reel_with_valid_author(self):
+        payload = {
+            "url": "https://www.facebook.com/reel/1234567890",
+            "author": "some.artist",
+            "type": "video",
+            "text": "#YangyangXuanling fanart",
+        }
+        r = self.client.post("/collect", json=payload, headers={"X-Collect-Secret": "test-secret"})
+        self.assertEqual(r.get_json()["added_to"], ["秧秧"])
+
+    def test_collect_rejects_facebook_reel_with_bad_author(self):
+        payload = {
+            "url": "https://www.facebook.com/reel/1234567890",
+            "author": "not a valid username!",
+            "type": "video",
+            "text": "#YangyangXuanling fanart",
+        }
+        r = self.client.post("/collect", json=payload, headers={"X-Collect-Secret": "test-secret"})
+        self.assertEqual(r.status_code, 400)
+
     def test_autocomplete_matches_homophone(self):
         # 秧秧 is pinyin "yangyang"; 央 is a homophone of 秧 (both "yang") but a different character.
         self.assertIn("秧秧", app_module.autocomplete_matches("央"))
