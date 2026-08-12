@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         抓圖 Bot - X/IG/FB 按讚自動蒐集
 // @namespace    ponytail
-// @version      3.5
-// @description  在 X、Instagram 或 Facebook 按讚符合角色 Hashtag 的貼文時，自動送去自己的 Discord 機器人後端收藏
+// @version      3.6
+// @description  在 X、Instagram 或 Facebook 按讚符合角色 Hashtag 的貼文時，自動送去自己的 Discord 機器人後端收藏；X 上轉推則彈出輸入框手動指定角色
 // @match        https://x.com/*
 // @match        https://twitter.com/*
 // @match        https://www.instagram.com/*
@@ -223,6 +223,12 @@
       return null;
     }
 
+    function extractTweetLink(article) {
+      const link = article.querySelector('a[href*="/status/"] time')?.closest("a");
+      const m = link?.href?.match(/^https:\/\/(?:x|twitter)\.com\/([^/]+)\/status\/(\d+)/);
+      return m ? { url: `https://x.com/${m[1]}/status/${m[2]}`, author: m[1] } : null;
+    }
+
     // 自動翻譯時畫面顯示譯文、hashtag 比對不到——先切回原文抓字，比完再切回翻譯顯示。
     const SHOW_ORIGINAL_PHRASES = ["顯示原文", "显示原文", "Show original", "元のツイートを表示", "번역 전 표시", "원문 보기"];
     const SHOW_TRANSLATION_PHRASES = ["顯示翻譯", "显示翻译", "Show translation", "翻訳を表示", "번역 보기"];
@@ -238,9 +244,46 @@
       }, 500);
     }
 
+    // 手動收藏：轉推當成「我確定要收藏這個」的手動觸發，跟讚那條自動判斷 hashtag 的路徑各自獨立、
+    // 互不影響——貼文沒下 hashtag 或關鍵字沒登記過也能收，直接自己指定要進哪個角色的收藏。
+    // 借用 /collect 既有的 hashtag 比對機制：把 text 組成「#角色的第一個關鍵字」送出去，後端自然就
+    // 會比對成功存進正確的角色，不用另外開一支後端 API。
+    // ⚠️ retweetConfirm 這個 testid 沒實測過，X 的轉推要點一次圖示跳出選單、再點一次「轉推」確認才
+    // 算數，如果點了選單裡的轉推卻沒反應，開 Console 看有沒有印出「偵測到轉推」那行來判斷是哪一步錯。
+    let pendingRetweetArticle = null;
+
+    function promptManualAdd(article, tags) {
+      const mediaType = detectMediaType(article);
+      if (!mediaType) return alert("這則貼文沒偵測到圖片或影片，無法加入收藏。");
+
+      const name = prompt("轉推收藏——輸入角色名稱（要跟 hashtags.json 裡的名字完全一樣）：")?.trim();
+      if (!name) return;
+      if (!tags[name]) return alert(`找不到角色「${name}」，請確認拼字跟 hashtags.json 一致。`);
+
+      const link = extractTweetLink(article);
+      const url = prompt("貼文連結：", link?.url || "")?.trim();
+      if (!url) return;
+
+      const keyword = tags[name][0].replace(/^#/, "");
+      submitCollect("[抓圖收藏][轉推]", { url, author: link?.author || "", text: `#${keyword}`, mediaType, chars: [name] });
+    }
+
     document.addEventListener(
       "click",
       (ev) => {
+        const retweetBtn = ev.target.closest('[data-testid="retweet"]');
+        if (retweetBtn) {
+          pendingRetweetArticle = retweetBtn.closest('article[data-testid="tweet"]');
+          return console.log("[抓圖收藏] 偵測到轉推按鈕，等確認轉推…");
+        }
+        const retweetConfirmBtn = ev.target.closest('[data-testid="retweetConfirm"]');
+        if (retweetConfirmBtn) {
+          const retweetArticle = pendingRetweetArticle;
+          pendingRetweetArticle = null;
+          if (!retweetArticle) return console.log("[抓圖收藏] 確認轉推了，但找不到是哪一則貼文（選擇器可能要調整）");
+          return loadHashtags((tags) => promptManualAdd(retweetArticle, tags));
+        }
+
         const likeBtn = ev.target.closest('[data-testid="like"]'); // 未按讚狀態的按鈕
         if (!likeBtn) return;
         const article = likeBtn.closest('article[data-testid="tweet"]');
@@ -249,17 +292,14 @@
         const mediaType = detectMediaType(article);
         if (!mediaType) return;
 
-        const link = article.querySelector('a[href*="/status/"] time')?.closest("a");
-        const m = link?.href?.match(/^https:\/\/(?:x|twitter)\.com\/([^/]+)\/status\/(\d+)/);
-        if (!m) return;
-        const [, author, id] = m;
-        const url = `https://x.com/${author}/status/${id}`;
+        const link = extractTweetLink(article);
+        if (!link) return;
 
         readOriginalText(article, (text) => {
           loadHashtags((tags) => {
             const chars = matchedCharacters(text, tags);
             if (chars.length === 0) return console.log("[抓圖收藏] 沒對到任何角色關鍵字，略過", text);
-            submitCollect("[抓圖收藏]", { url, author, text, mediaType, chars });
+            submitCollect("[抓圖收藏]", { url: link.url, author: link.author, text, mediaType, chars });
           });
         });
       },
