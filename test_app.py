@@ -131,6 +131,37 @@ class TestCollect(unittest.TestCase):
         r = self.client.post("/collect", json=payload, headers={"X-Collect-Secret": "test-secret"})
         self.assertEqual(r.status_code, 400)
 
+    def test_collect_accepts_facebook_group_post_with_valid_author(self):
+        payload = {
+            "url": "https://www.facebook.com/groups/fanart.group/posts/998877?__cft__[0]=xyz",
+            "author": "some.artist",
+            "type": "photo",
+            "text": "#YangyangXuanling fanart",
+        }
+        r = self.client.post("/collect", json=payload, headers={"X-Collect-Secret": "test-secret"})
+        self.assertEqual(r.get_json()["added_to"], ["秧秧"])
+        self.assertEqual(
+            app_module.load_collected()["秧秧"][0]["url"],
+            "https://www.facebook.com/groups/fanart.group/posts/998877",
+        )
+
+    def test_collect_facebook_requires_hash_prefix_on_keyword(self):
+        # X/IG match a keyword anywhere in the text; Facebook must not — plain mentions without a
+        # leading # are way too common there (discussion posts, not just fanart) to trust loosely.
+        payload = {
+            "url": "https://www.facebook.com/some.artist/posts/pfbid02abc123",
+            "author": "irrelevant",
+            "type": "photo",
+            "text": "just talking about YangyangXuanling, no fanart here",  # keyword present, no #
+        }
+        r = self.client.post("/collect", json=payload, headers={"X-Collect-Secret": "test-secret"})
+        self.assertEqual(r.get_json()["added_to"], [])
+
+        payload["text"] = "#YangyangXuanling fanart"
+        payload["url"] = "https://www.facebook.com/some.artist/posts/pfbid02abc124"  # avoid the dedup path
+        r = self.client.post("/collect", json=payload, headers={"X-Collect-Secret": "test-secret"})
+        self.assertEqual(r.get_json()["added_to"], ["秧秧"])
+
     def test_autocomplete_matches_homophone(self):
         # 秧秧 is pinyin "yangyang"; 央 is a homophone of 秧 (both "yang") but a different character.
         self.assertIn("秧秧", app_module.autocomplete_matches("央"))

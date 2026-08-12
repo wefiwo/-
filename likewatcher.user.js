@@ -56,11 +56,17 @@
     });
   }
 
-  function matchedCharacters(text, tags) {
+  // requireHash: FB 上關鍵字一定要帶 # 才算數（純文字提到角色名字太容易誤觸），跟後端 /collect
+  // 的規則保持一致；X/IG 維持原本「文字裡出現就算」。這裡只影響要不要送出前的本地判斷跟 log，真正
+  // 擋下來的是後端 /collect 自己重比對一次那關。
+  function matchedCharacters(text, tags, requireHash) {
     const lower = text.toLowerCase();
     return Object.entries(tags)
       .filter(([name]) => !name.startsWith("_"))
-      .filter(([, list]) => list.some((h) => lower.includes(h.toLowerCase())))
+      .filter(([, list]) => list.some((h) => {
+        const keyword = requireHash ? "#" + h.replace(/^#/, "") : h;
+        return lower.includes(keyword.toLowerCase());
+      }))
       .map(([name]) => name);
   }
 
@@ -85,15 +91,15 @@
     // ───────────────────────── Facebook ─────────────────────────
     // ⚠️ 沒有實測過（FB 沒有真人登入帳號可以測），下面的選擇器是憑經驗猜的，很可能要照 IG 當初的
     // 除錯方式（開 Console 看有沒有印出「找不到」的訊息，貼過來調整）重新調整過才會穩定動作。
-    // 網址只認得 app.py 那邊也接受的三種形狀（個人/粉專貼文、reel、單張照片），跟後端保持一致，
-    // 免得抓到了卻被 /collect 退回。
+    // 網址只認得 app.py 那邊也接受的四種形狀（個人/粉專貼文、reel、單張照片、社團貼文），跟後端保持
+    // 一致，免得抓到了卻被 /collect 退回。
     const LIKE_LABELS = ["讚", "Like"];
     const RESERVED_PATHS = new Set([
       "photo", "photos", "videos", "posts", "reel", "reels", "watch", "groups", "marketplace",
       "gaming", "live", "events", "pages", "people", "hashtag", "help", "settings", "profile.php",
       "permalink.php", "story.php", "login", "home.php", "messages", "notifications",
     ]);
-    const POST_LINK_RE = /^https:\/\/(?:www\.|m\.)?facebook\.com\/(?:([A-Za-z0-9.]{5,50})\/(posts|videos)\/([A-Za-z0-9]+)|reel\/(\d+)|photo\/?\?fbid=(\d+))/;
+    const POST_LINK_RE = /^https:\/\/(?:www\.|m\.)?facebook\.com\/(?:([A-Za-z0-9.]{5,50})\/(posts|videos)\/([A-Za-z0-9]+)|reel\/(\d+)|photo\/?\?fbid=(\d+)|groups\/([A-Za-z0-9_.]{1,50})\/(posts|permalink)\/([A-Za-z0-9]+))/;
 
     function findPostLink(root) {
       for (const a of root.querySelectorAll("a[href]")) {
@@ -112,11 +118,12 @@
     }
 
     // 作者的頭像＋姓名連結通常連續出現兩次指向同一個人；跟 IG 用同一招分辨作者跟留言者/推薦帳號。
+    // 社團裡的個人連結長得不一樣（/groups/{社團}/user/{id}/，不是平常的 /{帳號}/），兩種都認。
     function extractAuthor(container) {
       const candidates = [...container.querySelectorAll('a[href^="/"], a[href^="https://www.facebook.com/"]')]
-        .map((a) => a.getAttribute("href")?.match(/^(?:https:\/\/(?:www\.)?facebook\.com)?\/([A-Za-z0-9.]{5,50})(?:\/|\?|$)/))
-        .filter((m) => m && !RESERVED_PATHS.has(m[1].toLowerCase()))
-        .map((m) => m[1]);
+        .map((a) => a.getAttribute("href")?.match(/^(?:https:\/\/(?:www\.)?facebook\.com)?\/(?:groups\/[A-Za-z0-9_.]{1,50}\/user\/([A-Za-z0-9.]{1,50})|([A-Za-z0-9.]{5,50}))(?:\/|\?|$)/))
+        .filter((m) => m && !RESERVED_PATHS.has((m[1] || m[2]).toLowerCase()))
+        .map((m) => m[1] || m[2]);
       for (let i = 0; i < candidates.length - 1; i++) {
         if (candidates[i] === candidates[i + 1]) return candidates[i];
       }
@@ -158,8 +165,11 @@
         } else if (m[4]) {
           url = `https://www.facebook.com/reel/${m[4]}`;
           author = extractAuthor(container);
-        } else {
+        } else if (m[5]) {
           url = `https://www.facebook.com/photo/?fbid=${m[5]}`;
+          author = extractAuthor(container);
+        } else {
+          url = `https://www.facebook.com/groups/${m[6]}/${m[7]}/${m[8]}`;
           author = extractAuthor(container);
         }
         if (!author) return console.log("[抓圖收藏][FB] 抓不到帳號，略過（選擇器可能要調整）");
@@ -167,8 +177,8 @@
         fetchPostInfo(url, container, ({ text, mediaType }) => {
           console.log("[抓圖收藏][FB] 偵測到讚", { url, author, mediaType, textPreview: text.slice(0, 30) });
           loadHashtags((tags) => {
-            const chars = matchedCharacters(text, tags);
-            if (chars.length === 0) return console.log("[抓圖收藏][FB] 沒對到任何角色關鍵字，略過", text);
+            const chars = matchedCharacters(text, tags, true); // FB 一定要帶 # 才算數
+            if (chars.length === 0) return console.log("[抓圖收藏][FB] 沒對到任何角色關鍵字（要帶 #），略過", text);
             submitCollect("[抓圖收藏][FB]", { url, author, text, mediaType, chars });
           });
         });

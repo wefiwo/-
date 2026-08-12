@@ -41,11 +41,13 @@ INSTAGRAM_URL_RE = re.compile(r"^https://(?:www\.)?instagram\.com/(?:p|reel)/([A
 INSTAGRAM_USERNAME_RE = re.compile(r"^[A-Za-z0-9_.]{1,30}$")
 
 # FB 貼文網址帶的追蹤參數（?__cft__[0]=...）長度不固定，故意不用 $ 錨定字串結尾，抓到需要的部分就好，
-# 尾巴不管。只認得下面三種形狀（個人/粉專貼文、影片、單張照片）——permalink.php／社團貼文先不處理，
-# 之後真的用得到再加一個 elif 就好。
+# 尾巴不管。只認得下面四種形狀（個人/粉專貼文、影片、單張照片、社團貼文）——permalink.php／story.php
+# 先不處理，之後真的用得到再加一個 elif 就好。
 FACEBOOK_POST_RE = re.compile(r"^https://(?:www\.|m\.)?facebook\.com/(?P<user>[A-Za-z0-9.]{5,50})/(?P<kind>posts|videos)/(?P<id>[A-Za-z0-9]+)")
 FACEBOOK_REEL_RE = re.compile(r"^https://(?:www\.|m\.)?facebook\.com/reel/(?P<id>\d+)")
 FACEBOOK_PHOTO_RE = re.compile(r"^https://(?:www\.|m\.)?facebook\.com/photo/?\?fbid=(?P<id>\d+)")
+# 社團貼文網址不帶發文者的帳號，只有社團 id——作者一樣得靠 client 端抓，跟 reel/photo 同一個信任層級。
+FACEBOOK_GROUP_RE = re.compile(r"^https://(?:www\.|m\.)?facebook\.com/groups/(?P<group>[A-Za-z0-9_.]{1,50})/(?P<kind>posts|permalink)/(?P<id>[A-Za-z0-9]+)")
 FACEBOOK_USERNAME_RE = re.compile(r"^[A-Za-z0-9.]{5,50}$")
 
 HASHTAGS_PATH = Path(__file__).parent / "hashtags.json"
@@ -204,6 +206,8 @@ def collect():
     fb_post_m = FACEBOOK_POST_RE.match(raw_url)
     fb_reel_m = FACEBOOK_REEL_RE.match(raw_url)
     fb_photo_m = FACEBOOK_PHOTO_RE.match(raw_url)
+    fb_group_m = FACEBOOK_GROUP_RE.match(raw_url)
+    is_facebook = False
     if tweet_m:
         # x.com/twitter.com embeds the author right in the URL — trust that, not the client's claim.
         url, author = tweet_m.group(0).replace("twitter.com", "x.com"), tweet_m.group(1)
@@ -216,18 +220,28 @@ def collect():
     elif fb_post_m:
         # facebook.com/{user}/posts|videos/{id} embeds the author right in the URL too — trust that.
         url = f"https://www.facebook.com/{fb_post_m['user']}/{fb_post_m['kind']}/{fb_post_m['id']}"
-        author = fb_post_m["user"]
-    elif fb_reel_m or fb_photo_m:
-        # Reel/photo URLs don't carry a username, same situation as Instagram above.
-        url = f"https://www.facebook.com/reel/{fb_reel_m['id']}" if fb_reel_m else f"https://www.facebook.com/photo/?fbid={fb_photo_m['id']}"
-        author = (body.get("author") or "").strip()
+        author, is_facebook = fb_post_m["user"], True
+    elif fb_reel_m or fb_photo_m or fb_group_m:
+        # Reel/photo/group-post URLs don't carry a (public) username, same situation as Instagram above.
+        if fb_reel_m:
+            url = f"https://www.facebook.com/reel/{fb_reel_m['id']}"
+        elif fb_photo_m:
+            url = f"https://www.facebook.com/photo/?fbid={fb_photo_m['id']}"
+        else:
+            url = f"https://www.facebook.com/groups/{fb_group_m['group']}/{fb_group_m['kind']}/{fb_group_m['id']}"
+        author, is_facebook = (body.get("author") or "").strip(), True
         if not FACEBOOK_USERNAME_RE.match(author):
             abort(400)
     else:
         abort(400)  # reject anything that isn't actually a real x.com/twitter.com/instagram.com/facebook.com post link
 
     lower_text = text.lower()
-    matched = [name for name, tags in HASHTAGS.items() if any(t.lower() in lower_text for t in tags)]
+    if is_facebook:
+        # FB 貼文本文常常會提到角色名字但沒配圖（分享心得、討論串），純文字比對太容易誤觸——
+        # 所以在 FB 上關鍵字「一定」要帶 # 才算數，X/IG 維持原本「文字裡出現就算」的寬鬆比對。
+        matched = [name for name, tags in HASHTAGS.items() if any(f"#{t.lower().lstrip('#')}" in lower_text for t in tags)]
+    else:
+        matched = [name for name, tags in HASHTAGS.items() if any(t.lower() in lower_text for t in tags)]
     if not matched:
         return jsonify({"added_to": []})
 
