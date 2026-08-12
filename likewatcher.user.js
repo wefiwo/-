@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         抓圖 Bot - X/IG/FB 按讚自動蒐集
 // @namespace    ponytail
-// @version      3.3
+// @version      3.4
 // @description  在 X、Instagram 或 Facebook 按讚符合角色 Hashtag 的貼文時，自動送去自己的 Discord 機器人後端收藏
 // @match        https://x.com/*
 // @match        https://twitter.com/*
@@ -140,20 +140,25 @@
       return candidates[0] || null;
     }
 
-    function fetchPostInfo(url, container, cb) {
-      fetch(url, { credentials: "include" })
-        .then((r) => r.text())
-        .then((html) => {
-          const descM = html.match(/<meta property="og:description" content="([^"]*)"/);
-          const ta = document.createElement("textarea");
-          ta.innerHTML = descM ? descM[1] : "";
-          const mediaType = /\/(?:reel|videos)\//.test(url) ? "video" : container.querySelector("video") ? "video" : "photo";
-          cb({ text: ta.value, mediaType });
-        })
-        .catch((e) => {
-          console.error("[抓圖收藏][FB] 抓貼文資訊失敗", e);
-          cb({ text: "", mediaType: "photo" });
-        });
+    // 一開始學 IG 用「抓貼文自己網址的 og:description」讀內文，結果 FB 的 /photo/?fbid= 這種
+    // 縮圖檢視頁的 og:description 根本不是完整貼文內文（是空的）——FB 的內文其實好好地顯示在畫面
+    // 上（不像 IG Reels 那樣藏在讀不到的 shadow DOM 裡），直接讀 DOM 比較準也不用等網路。長內文會
+    // 被截斷成「...查看更多」，跟 X 的「顯示原文」是同一招：先點開再讀。
+    const SEE_MORE_PHRASES = ["查看更多", "顯示更多", "See more", "もっと見る", "더 보기"];
+
+    function findSeeMoreButton(container) {
+      for (const el of container.querySelectorAll('[role="button"]')) {
+        const t = el.innerText?.trim();
+        if (t && SEE_MORE_PHRASES.some((p) => t === p || t.includes(p))) return el;
+      }
+      return null;
+    }
+
+    function readCaption(container, cb) {
+      const seeMoreBtn = findSeeMoreButton(container);
+      if (!seeMoreBtn) return cb(container.innerText || "");
+      seeMoreBtn.click();
+      setTimeout(() => cb(container.innerText || ""), 300);
     }
 
     document.addEventListener(
@@ -187,7 +192,8 @@
         }
         if (!author) return console.log("[抓圖收藏][FB] 抓不到帳號，略過（選擇器可能要調整）");
 
-        fetchPostInfo(url, container, ({ text, mediaType }) => {
+        const mediaType = /\/(?:reel|videos)\//.test(url) || container.querySelector("video") ? "video" : "photo";
+        readCaption(container, (text) => {
           console.log("[抓圖收藏][FB] 偵測到讚", { url, author, mediaType, textPreview: text.slice(0, 30) });
           loadHashtags((tags) => {
             const chars = matchedCharacters(text, tags, true); // FB 一定要帶 # 才算數
