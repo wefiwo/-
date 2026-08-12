@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         抓圖 Bot - X/IG/FB 按讚自動蒐集
 // @namespace    ponytail
-// @version      3.8
+// @version      3.9
 // @description  在 X、Instagram 或 Facebook 按讚符合角色 Hashtag 的貼文時，自動送去自己的 Discord 機器人後端收藏；X 上轉推則彈出輸入框手動指定角色
 // @match        https://x.com/*
 // @match        https://twitter.com/*
@@ -35,6 +35,19 @@
   GM_registerMenuCommand("重新設定 COLLECT_SECRET", () => {
     const entered = prompt("輸入新的 COLLECT_SECRET：", GM_getValue("collectSecret", ""));
     if (entered) GM_setValue("collectSecret", entered.trim());
+  });
+
+  // 轉推手動收藏功能只給你自己這台裝置用——腳本會分享給別人（同一組 COLLECT_SECRET），但這個開關
+  // 存在 Tampermonkey 的本機儲存空間，裝置各自獨立、不會跟著腳本更新同步過去。預設關閉，只有在自己
+  // 這台裝置手動執行過一次下面這個選單指令才會打開；別人裝了同一份腳本，沒人幫他們按這個開關，
+  // 對他們來說這功能就一直是關的。
+  function retweetAddEnabled() {
+    return GM_getValue("retweetAddEnabled", false);
+  }
+  GM_registerMenuCommand("切換：轉推手動收藏功能（僅本機裝置）", () => {
+    const next = !retweetAddEnabled();
+    GM_setValue("retweetAddEnabled", next);
+    alert("轉推手動收藏功能已" + (next ? "開啟" : "關閉") + "（只影響這台裝置）。");
   });
 
   let hashtagsCache = null; // 角色 → Hashtag 對照表，每次載入頁面拉一次就好
@@ -294,17 +307,19 @@
     document.addEventListener(
       "click",
       (ev) => {
-        const retweetBtn = ev.target.closest('[data-testid="retweet"]');
-        if (retweetBtn) {
-          pendingRetweetArticle = retweetBtn.closest('article[data-testid="tweet"]');
-          return console.log("[抓圖收藏] 偵測到轉推按鈕，等確認轉推…");
-        }
-        const retweetConfirmBtn = ev.target.closest('[data-testid="retweetConfirm"]');
-        if (retweetConfirmBtn) {
-          const retweetArticle = pendingRetweetArticle;
-          pendingRetweetArticle = null;
-          if (!retweetArticle) return console.log("[抓圖收藏] 確認轉推了，但找不到是哪一則貼文（選擇器可能要調整）");
-          return loadHashtags((tags) => promptManualAdd(retweetArticle, tags));
+        if (retweetAddEnabled()) {
+          const retweetBtn = ev.target.closest('[data-testid="retweet"]');
+          if (retweetBtn) {
+            pendingRetweetArticle = retweetBtn.closest('article[data-testid="tweet"]');
+            return console.log("[抓圖收藏] 偵測到轉推按鈕，等確認轉推…");
+          }
+          const retweetConfirmBtn = ev.target.closest('[data-testid="retweetConfirm"]');
+          if (retweetConfirmBtn) {
+            const retweetArticle = pendingRetweetArticle;
+            pendingRetweetArticle = null;
+            if (!retweetArticle) return console.log("[抓圖收藏] 確認轉推了，但找不到是哪一則貼文（選擇器可能要調整）");
+            return loadHashtags((tags) => promptManualAdd(retweetArticle, tags));
+          }
         }
 
         const likeBtn = ev.target.closest('[data-testid="like"]'); // 未按讚狀態的按鈕
