@@ -57,6 +57,44 @@ class TestCollect(unittest.TestCase):
 
         self.assertEqual(len(app_module.load_collected()["秧秧"]), 1)
 
+    def test_delete_entry_removes_matching_url(self):
+        app_module.save_collected({"秧秧": [{"url": "https://x.com/a/status/1", "author": "a", "type": "photo"}]})
+        self.assertTrue(app_module.delete_entry("秧秧", "https://x.com/a/status/1"))
+        self.assertEqual(app_module.load_collected()["秧秧"], [])
+
+    def test_delete_entry_returns_false_when_url_not_found(self):
+        app_module.save_collected({"秧秧": [{"url": "https://x.com/a/status/1", "author": "a", "type": "photo"}]})
+        self.assertFalse(app_module.delete_entry("秧秧", "https://x.com/nope/status/9"))
+        self.assertEqual(len(app_module.load_collected()["秧秧"]), 1)
+
+    def test_url_choices_filters_by_author_or_url_substring(self):
+        app_module.save_collected({"秧秧": [
+            {"url": "https://x.com/artistA/status/1", "author": "artistA", "type": "photo"},
+            {"url": "https://x.com/artistB/status/2", "author": "artistB", "type": "video"},
+        ]})
+        choices = app_module.url_choices("秧秧", "artista")
+        self.assertEqual([c["value"] for c in choices], ["https://x.com/artistA/status/1"])
+
+    def test_build_list_content_shows_counts_and_entries(self):
+        app_module.save_collected({"秧秧": [
+            {"url": "https://x.com/a/status/1", "author": "a", "type": "photo"},
+            {"url": "https://x.com/b/status/2", "author": "b", "type": "video"},
+        ]})
+        content = app_module.build_list_content("秧秧", None)
+        self.assertIn("📷 1 張圖片", content)
+        self.assertIn("🎬 1 部影片", content)
+        self.assertIn("https://x.com/a/status/1", content)
+        self.assertIn("https://x.com/b/status/2", content)
+
+    def test_build_list_content_filters_by_type(self):
+        app_module.save_collected({"秧秧": [
+            {"url": "https://x.com/a/status/1", "author": "a", "type": "photo"},
+            {"url": "https://x.com/b/status/2", "author": "b", "type": "video"},
+        ]})
+        content = app_module.build_list_content("秧秧", "影片")
+        self.assertNotIn("https://x.com/a/status/1", content)
+        self.assertIn("https://x.com/b/status/2", content)
+
     def test_collect_rejects_wrong_secret(self):
         r = self.client.post(
             "/collect",

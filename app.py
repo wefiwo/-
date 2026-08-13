@@ -133,6 +133,55 @@ def save_collected(data):
         f.write(payload)
 
 
+def delete_entry(character, url):
+    data = load_collected()
+    bucket = data.get(character, [])
+    remaining = [e for e in bucket if e["url"] != url]
+    if len(remaining) == len(bucket):
+        return False
+    data[character] = remaining
+    save_collected(data)
+    return True
+
+
+def url_choices(character, query):
+    # /抓圖刪除 的「網址」欄位自動完成——照選好的角色列出收藏的貼文，用網址或作者子字串篩選，不用先
+    # 跑 /抓圖清單 複製貼上。Discord 的 choice name/value 都限 100 字，URL 理論上不會超過但保險截斷。
+    query = query.lower()
+    entries = load_collected().get(character, [])
+    matches = [e for e in entries if query in e["url"].lower() or query in (e.get("author") or "").lower()]
+    return [
+        {
+            "name": f"{'🎬' if e['type'] == 'video' else '📷'} {e.get('author') or '?'} - {e['url']}"[:100],
+            "value": e["url"][:100],
+        }
+        for e in matches[:25]
+    ]
+
+
+def build_list_content(character, media_type_label):
+    all_entries = load_collected().get(character, [])
+    n_photo = sum(1 for e in all_entries if e.get("type") == "photo")
+    n_video = sum(1 for e in all_entries if e.get("type") == "video")
+    header = f"**{character}** 收藏總覽：📷 {n_photo} 張圖片、🎬 {n_video} 部影片"
+
+    shown = all_entries
+    if media_type_label:
+        want = "video" if media_type_label == "影片" else "photo"
+        shown = [e for e in shown if e.get("type") == want]
+    if not shown:
+        return header
+
+    limit = 15
+    lines = [
+        f"{i}. {'🎬' if e['type'] == 'video' else '📷'} [{e.get('author') or '?'}]({e['url']})"
+        for i, e in enumerate(shown[:limit], 1)
+    ]
+    if len(shown) > limit:
+        lines.append(f"（還有 {len(shown) - limit} 筆，只顯示前 {limit} 筆）")
+    return header + "\n" + "\n".join(lines)
+
+
 # vxtwitter.com / kkinstagram.com / facebed.com are free public proxies that redirect straight
 # to the real media file so Discord actually embeds the image/video inline (the real domains
 # don't unfurl reliably there). kkinstagram picked over ddinstagram — the latter 403s now.
@@ -211,14 +260,18 @@ def interactions():
         return jsonify({"type": 1})
 
     if itype == 4:  # autocomplete
+        opts = {o["name"]: o["value"] for o in body["data"]["options"]}
         focused = next(o for o in body["data"]["options"] if o.get("focused"))
-        matches = autocomplete_matches(focused["value"].strip())
-        return jsonify({"type": 8, "data": {"choices": [{"name": n, "value": n} for n in matches]}})
+        if focused["name"] == "網址":
+            choices = url_choices(opts.get("角色", ""), focused["value"].strip())
+        else:
+            choices = [{"name": n, "value": n} for n in autocomplete_matches(focused["value"].strip())]
+        return jsonify({"type": 8, "data": {"choices": choices}})
 
     if itype == 2:  # slash command invoked
+        command_name = body["data"]["name"]
         opts = {o["name"]: o["value"] for o in body["data"].get("options", [])}
         character = opts.get("角色", "")
-        media_type = opts.get("類型", "圖片")
 
         if character not in HASHTAGS:
             return jsonify({
@@ -226,6 +279,19 @@ def interactions():
                 "data": {"content": f"找不到「{character}」的 Hashtag，請先在 hashtags.json 新增。", "flags": 64},
             })
 
+        if command_name == "抓圖清單":
+            return jsonify({"type": 4, "data": {"content": build_list_content(character, opts.get("類型"))}})
+
+        if command_name == "抓圖刪除":
+            target_url = (opts.get("網址") or "").strip()
+            if not delete_entry(character, target_url):
+                return jsonify({
+                    "type": 4,
+                    "data": {"content": f"「{character}」的收藏裡找不到這個網址。", "flags": 64},
+                })
+            return jsonify({"type": 4, "data": {"content": f"已從「{character}」的收藏刪除：{target_url}"}})
+
+        media_type = opts.get("類型", "圖片")
         want = "video" if media_type == "影片" else "photo"
         pool = [e for e in load_collected().get(character, []) if e.get("type") == want]
         if not pool:
