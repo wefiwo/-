@@ -32,6 +32,9 @@ API_BASE = "https://discord.com/api/v10"
 BOT_TOKEN = os.environ["DISCORD_BOT_TOKEN"]
 VERIFY_KEY = VerifyKey(bytes.fromhex(os.environ["DISCORD_PUBLIC_KEY"]))
 COLLECT_SECRET = os.environ["COLLECT_SECRET"]
+# 選填：設了才會在 client 主動要求時（見 /collect 的 announce 欄位）主動推播新收藏到這個頻道。
+# bot 要先被邀進那個伺服器、在那個頻道有發言權限——User Install 不夠，這個一定要真的邀進去才行。
+ANNOUNCE_CHANNEL_ID = os.environ.get("ANNOUNCE_CHANNEL_ID", "")
 
 APP_ID = os.environ.get("DISCORD_APPLICATION_ID") or requests.get(
     f"{API_BASE}/oauth2/applications/@me", headers={"Authorization": f"Bot {BOT_TOKEN}"}
@@ -159,6 +162,25 @@ def build_link_lines(url):
     return fix_embed_url(url)
 
 
+def post_announcement(characters, media_type, url):
+    if not ANNOUNCE_CHANNEL_ID:
+        return
+    media_label = "影片" if media_type == "video" else "圖片"
+    content = f"**{'、'.join(characters)}** 的新{media_label}\n{build_link_lines(url)}"
+    try:
+        r = requests.post(
+            f"{API_BASE}/channels/{ANNOUNCE_CHANNEL_ID}/messages",
+            headers={"Authorization": f"Bot {BOT_TOKEN}"},
+            json={"content": content},
+            timeout=10,
+        )
+        r.raise_for_status()
+    except requests.RequestException as e:
+        # ponytail: best-effort push, swallow errors so a bot-permission/channel-id hiccup never
+        # blocks /collect's actual job (saving the entry) — just log it for later debugging.
+        print(f"[announce] 推播失敗: {e}")
+
+
 def verify(req):
     sig = req.headers.get("X-Signature-Ed25519", "")
     ts = req.headers.get("X-Signature-Timestamp", "")
@@ -277,6 +299,12 @@ def collect():
             bucket.append({"url": url, "author": author, "type": media_type})
             added.append(character)
     save_collected(data)
+
+    if added and body.get("announce"):
+        # client-side opt-in flag (the userscript's own per-device toggle) — /collect itself
+        # doesn't decide whether to announce, it just needs ANNOUNCE_CHANNEL_ID configured.
+        post_announcement(added, media_type, url)
+
     return jsonify({"added_to": added})
 
 

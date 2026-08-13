@@ -3,6 +3,7 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 os.environ.setdefault("DISCORD_PUBLIC_KEY", "00" * 32)
 os.environ.setdefault("DISCORD_BOT_TOKEN", "test-token")
@@ -156,6 +157,29 @@ class TestCollect(unittest.TestCase):
         payload["url"] = "https://www.facebook.com/some.artist/posts/pfbid02abc124"  # avoid the dedup path
         r = self.client.post("/collect", json=payload, headers={"X-Collect-Secret": "test-secret"})
         self.assertEqual(r.get_json()["added_to"], ["秧秧"])
+
+    def test_collect_announce_flag_skipped_without_channel_configured(self):
+        # ANNOUNCE_CHANNEL_ID isn't set in the test env — announce:true shouldn't attempt a request.
+        payload = {"url": "https://x.com/a/status/9", "author": "a", "type": "photo", "text": "#YangyangXuanling", "announce": True}
+        with patch("app.requests.post") as mock_post:
+            r = self.client.post("/collect", json=payload, headers={"X-Collect-Secret": "test-secret"})
+        self.assertEqual(r.get_json()["added_to"], ["秧秧"])
+        mock_post.assert_not_called()
+
+    def test_collect_announce_flag_posts_to_configured_channel(self):
+        payload = {"url": "https://x.com/a/status/10", "author": "a", "type": "photo", "text": "#YangyangXuanling", "announce": True}
+        with patch.object(app_module, "ANNOUNCE_CHANNEL_ID", "12345"), patch("app.requests.post") as mock_post:
+            r = self.client.post("/collect", json=payload, headers={"X-Collect-Secret": "test-secret"})
+        self.assertEqual(r.get_json()["added_to"], ["秧秧"])
+        mock_post.assert_called_once()
+        called_url = mock_post.call_args.args[0]
+        self.assertIn("/channels/12345/messages", called_url)
+
+    def test_collect_without_announce_flag_never_posts(self):
+        payload = {"url": "https://x.com/a/status/11", "author": "a", "type": "photo", "text": "#YangyangXuanling"}
+        with patch.object(app_module, "ANNOUNCE_CHANNEL_ID", "12345"), patch("app.requests.post") as mock_post:
+            self.client.post("/collect", json=payload, headers={"X-Collect-Secret": "test-secret"})
+        mock_post.assert_not_called()
 
     def test_autocomplete_matches_homophone(self):
         # 秧秧 is pinyin "yangyang"; 央 is a homophone of 秧 (both "yang") but a different character.

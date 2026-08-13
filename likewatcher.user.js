@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         抓圖 Bot - X/IG/FB 按讚自動蒐集
 // @namespace    ponytail
-// @version      3.9
+// @version      4.0
 // @description  在 X、Instagram 或 Facebook 按讚符合角色 Hashtag 的貼文時，自動送去自己的 Discord 機器人後端收藏；X 上轉推則彈出輸入框手動指定角色
 // @match        https://x.com/*
 // @match        https://twitter.com/*
@@ -50,6 +50,17 @@
     alert("轉推手動收藏功能已" + (next ? "開啟" : "關閉") + "（只影響這台裝置）。");
   });
 
+  // 同一招：預設關閉、本機開關，開了才會在 submitCollect 送出的請求裡多帶一個 announce 旗標，後端
+  // 收到才會主動把這則貼文推播到指定的 Discord 頻道（要後端有設 ANNOUNCE_CHANNEL_ID 才有作用）。
+  function announceEnabled() {
+    return GM_getValue("announceEnabled", false);
+  }
+  GM_registerMenuCommand("切換：自動推播到 Discord 頻道（僅本機裝置）", () => {
+    const next = !announceEnabled();
+    GM_setValue("announceEnabled", next);
+    alert("自動推播已" + (next ? "開啟" : "關閉") + "（只影響這台裝置）。");
+  });
+
   let hashtagsCache = null; // 角色 → Hashtag 對照表，每次載入頁面拉一次就好
 
   function loadHashtags(cb) {
@@ -90,7 +101,7 @@
         method: "POST",
         url: BACKEND_URL + "/collect",
         headers: { "Content-Type": "application/json", "X-Collect-Secret": secret },
-        data: JSON.stringify({ url, author, text, type: mediaType }),
+        data: JSON.stringify({ url, author, text, type: mediaType, announce: announceEnabled() }),
         onload: (res) => console.log(tag, chars, res.status, res.responseText),
         onerror: (e) => console.error(tag + " 送出失敗", e),
       });

@@ -150,6 +150,20 @@ waitress-serve --host=0.0.0.0 --port=$PORT app:app
 
 設定好這兩個變數後，`app.py` 會自動改用 Upstash 存 `collected.json` 的內容，不再受 Render 重啟影響。
 
+### 選用：按讚自動推播到指定 Discord 頻道
+
+平常 `/抓圖` 是被動查詢（打指令才回覆），這個功能是主動推播：本機 Tampermonkey 選單開啟「自動推播到 Discord 頻道」開關（只影響那一台裝置，見 `likewatcher.user.js` 註解）之後，每次成功收藏新貼文，bot 會自己把它發到你指定的頻道。
+
+這件事跟 User Install 是**兩回事**——User Install 只讓你能在私訊/群組打 `/抓圖`，但 bot 沒有真的加入任何伺服器，沒有頻道可以主動發言。要做到主動推播，得另外用一般的 bot 邀請連結把它加進伺服器：
+
+1. 回 https://discord.com/developers/applications 選你的 App → **OAuth2 → URL Generator**。
+2. **Scopes** 勾 `bot`；**Bot Permissions** 勾 `Send Messages`（要看得到頻道的話再加 `View Channel`）。
+3. 複製頁面下方產生的網址，開啟它，選要加入的伺服器，授權。
+4. Discord 打開**開發者模式**（設定 → 進階）才能右鍵頻道複製 ID：右鍵目標頻道 → **複製頻道 ID**。
+5. 把這串 ID 填進 Render 的 Environment 分頁，新增 `ANNOUNCE_CHANNEL_ID` 變數，存檔重新部署（本機測試一樣填進 `.env`）。
+
+不設這個變數的話，就算本機開關打開了，後端也不會推播（`ANNOUNCE_CHANNEL_ID` 沒填，`/collect` 直接跳過這步），不影響原本 `/抓圖` 的查詢功能。
+
 ## 運作流程備忘
 
 1. 你在 X 按讚 → `likewatcher.user.js` 讀畫面上這則貼文的文字/連結/媒體類型 → 比對 `hashtags.json` 有沒有對到 → 有的話 POST 到 `/collect`。
