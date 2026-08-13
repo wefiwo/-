@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         抓圖 Bot - X/IG/FB 按讚自動蒐集
 // @namespace    ponytail
-// @version      4.0
+// @version      4.1
 // @description  在 X、Instagram 或 Facebook 按讚符合角色 Hashtag 的貼文時，自動送去自己的 Discord 機器人後端收藏；X 上轉推則彈出輸入框手動指定角色
 // @match        https://x.com/*
 // @match        https://twitter.com/*
@@ -97,11 +97,15 @@
   function submitCollect(tag, { url, author, text, mediaType, chars }) {
     getSecret((secret) => {
       if (!secret) return console.error(tag + " 沒有設定 COLLECT_SECRET，取消送出");
+      const announce = announceEnabled();
+      // GM_xmlhttpRequest 是 Tampermonkey 自己背景執行緒送出去的，不會出現在網頁本身的 Network
+      // 分頁裡——要確認實際送出的內容（尤其 announce 這個旗標），只能靠這行印在 Console 裡看。
+      console.log(tag + " 送出:", { url, author, mediaType, announce });
       GM_xmlhttpRequest({
         method: "POST",
         url: BACKEND_URL + "/collect",
         headers: { "Content-Type": "application/json", "X-Collect-Secret": secret },
-        data: JSON.stringify({ url, author, text, type: mediaType, announce: announceEnabled() }),
+        data: JSON.stringify({ url, author, text, type: mediaType, announce }),
         onload: (res) => console.log(tag, chars, res.status, res.responseText),
         onerror: (e) => console.error(tag + " 送出失敗", e),
       });
