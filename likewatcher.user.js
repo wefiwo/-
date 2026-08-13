@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         抓圖 Bot - X/IG/FB 按讚自動蒐集
 // @namespace    ponytail
-// @version      4.2
-// @description  在 X、Instagram 或 Facebook 按讚符合角色 Hashtag 的貼文時，自動送去自己的 Discord 機器人後端收藏；X 上轉推則彈出輸入框手動指定角色
+// @version      4.3
+// @description  在 X、Instagram 或 Facebook 按讚符合角色 Hashtag 的貼文時，自動送去自己的 Discord 機器人後端收藏；X 上轉推則彈出輸入框手動指定角色；Alt+Q/Alt+A 快捷鍵切換本機開關
 // @match        https://x.com/*
 // @match        https://twitter.com/*
 // @match        https://www.instagram.com/*
@@ -38,27 +38,51 @@
     if (entered) GM_setValue("collectSecret", entered.trim());
   });
 
+  function showToast(text) {
+    const el = document.createElement("div");
+    el.textContent = text;
+    el.style.cssText = "position:fixed;top:16px;right:16px;z-index:2147483647;background:#1d9bf0;"
+      + "color:#fff;padding:8px 14px;border-radius:6px;font:14px sans-serif;box-shadow:0 2px 8px rgba(0,0,0,.3);";
+    document.body.appendChild(el);
+    setTimeout(() => el.remove(), 1500);
+  }
+
   // 本機限定開關：狀態存在 Tampermonkey 自己的儲存空間，裝置各自獨立、不會跟著腳本更新同步給別人
   // （腳本會分享給別人，同一組 COLLECT_SECRET，但這個開關不會）。選單文字前面用 ✅/⬜ 顯示目前狀態，
   // 每次切換就重新註冊一次選單項目（Tampermonkey 沒有原生的開關 UI 可以用，這是最接近的做法）。
+  // 回傳的判斷函式本身掛一個 .toggle 方法，讓下面的快捷鍵可以直接呼叫同一套切換邏輯。
   function registerToggleMenu(label, key) {
     let commandId;
+    const isEnabled = () => GM_getValue(key, false);
+    const toggle = () => {
+      GM_setValue(key, !isEnabled());
+      render();
+      showToast(`${label}已${isEnabled() ? "開啟 ✅" : "關閉 ⬜"}`);
+    };
     const render = () => {
       if (commandId !== undefined) GM_unregisterMenuCommand(commandId);
-      const on = GM_getValue(key, false);
-      commandId = GM_registerMenuCommand(`${on ? "✅" : "⬜"} ${label}（僅本機裝置）`, () => {
-        GM_setValue(key, !on);
-        render();
-      });
+      commandId = GM_registerMenuCommand(`${isEnabled() ? "✅" : "⬜"} ${label}（僅本機裝置）`, toggle);
     };
     render();
-    return () => GM_getValue(key, false);
+    isEnabled.toggle = toggle;
+    return isEnabled;
   }
 
   const retweetAddEnabled = registerToggleMenu("轉推手動收藏功能", "retweetAddEnabled");
   // announce 開了才會在 submitCollect 送出的請求裡多帶一個 announce 旗標，後端收到才會主動把這則
   // 貼文推播到指定的 Discord 頻道（要後端有設 ANNOUNCE_CHANNEL_ID 才有作用）。
   const announceEnabled = registerToggleMenu("自動推播到 Discord 頻道", "announceEnabled");
+
+  // 快捷鍵：Alt+Q 切轉推手動收藏、Alt+A 切自動推播，不用開選單也能切換。輸入框/可編輯區域裡打字時
+  // 不觸發，避免跟打字內容衝突。
+  document.addEventListener("keydown", (ev) => {
+    if (!ev.altKey || ev.ctrlKey || ev.metaKey || ev.shiftKey) return;
+    const el = document.activeElement;
+    if (el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable)) return;
+    const key = ev.key.toLowerCase();
+    if (key === "q") { ev.preventDefault(); retweetAddEnabled.toggle(); }
+    else if (key === "a") { ev.preventDefault(); announceEnabled.toggle(); }
+  });
 
   let hashtagsCache = null; // 角色 → Hashtag 對照表，每次載入頁面拉一次就好
 
