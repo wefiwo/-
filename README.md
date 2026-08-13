@@ -160,9 +160,9 @@ waitress-serve --host=0.0.0.0 --port=$PORT app:app
 2. **Scopes** 勾 `bot`；**Bot Permissions** 勾 `Send Messages`（要看得到頻道的話再加 `View Channel`）。
 3. 複製頁面下方產生的網址，開啟它，選要加入的伺服器，授權。
 4. Discord 打開**開發者模式**（設定 → 進階）才能右鍵頻道複製 ID：右鍵目標頻道 → **複製頻道 ID**。
-5. 把這串 ID 填進 Render 的 Environment 分頁，新增 `ANNOUNCE_CHANNEL_ID` 變數，存檔重新部署（本機測試一樣填進 `.env`）。
+5. 把這串 ID 填進 Render 的 Environment 分頁，新增 `TEXT_ANNOUNCE_CHANNEL_ID`（或 `MARUNA_ANNOUNCE_CHANNEL_ID`，兩個都設的話同一則會兩邊都發）變數，存檔重新部署（本機測試一樣填進 `.env`）。
 
-不設這個變數的話，就算本機開關打開了，後端也不會推播（`ANNOUNCE_CHANNEL_ID` 沒填，`/collect` 直接跳過這步），不影響原本 `/抓圖` 的查詢功能。
+兩個變數都不設的話，就算本機開關打開了，後端也不會推播（`/collect` 直接跳過這步），不影響原本 `/抓圖` 的查詢功能。
 
 ## 運作流程備忘
 

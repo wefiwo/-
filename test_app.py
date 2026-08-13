@@ -159,25 +159,28 @@ class TestCollect(unittest.TestCase):
         self.assertEqual(r.get_json()["added_to"], ["秧秧"])
 
     def test_collect_announce_flag_skipped_without_channel_configured(self):
-        # ANNOUNCE_CHANNEL_ID isn't set in the test env — announce:true shouldn't attempt a request.
+        # ANNOUNCE_CHANNEL_IDS is empty in the test env — announce:true shouldn't attempt a request.
         payload = {"url": "https://x.com/a/status/9", "author": "a", "type": "photo", "text": "#YangyangXuanling", "announce": True}
         with patch("app.requests.post") as mock_post:
             r = self.client.post("/collect", json=payload, headers={"X-Collect-Secret": "test-secret"})
         self.assertEqual(r.get_json()["added_to"], ["秧秧"])
         mock_post.assert_not_called()
 
-    def test_collect_announce_flag_posts_to_configured_channel(self):
+    def test_collect_announce_flag_posts_to_both_configured_channels(self):
         payload = {"url": "https://x.com/a/status/10", "author": "a", "type": "photo", "text": "#YangyangXuanling", "announce": True}
-        with patch.object(app_module, "ANNOUNCE_CHANNEL_ID", "12345"), patch("app.requests.post") as mock_post:
+        with patch.object(app_module, "ANNOUNCE_CHANNEL_IDS", ["111", "222"]), patch("app.requests.post") as mock_post:
             r = self.client.post("/collect", json=payload, headers={"X-Collect-Secret": "test-secret"})
         self.assertEqual(r.get_json()["added_to"], ["秧秧"])
-        mock_post.assert_called_once()
-        called_url = mock_post.call_args.args[0]
-        self.assertIn("/channels/12345/messages", called_url)
+        self.assertEqual(mock_post.call_count, 2)
+        called_urls = {c.args[0] for c in mock_post.call_args_list}
+        self.assertEqual(called_urls, {
+            "https://discord.com/api/v10/channels/111/messages",
+            "https://discord.com/api/v10/channels/222/messages",
+        })
 
     def test_collect_without_announce_flag_never_posts(self):
         payload = {"url": "https://x.com/a/status/11", "author": "a", "type": "photo", "text": "#YangyangXuanling"}
-        with patch.object(app_module, "ANNOUNCE_CHANNEL_ID", "12345"), patch("app.requests.post") as mock_post:
+        with patch.object(app_module, "ANNOUNCE_CHANNEL_IDS", ["111"]), patch("app.requests.post") as mock_post:
             self.client.post("/collect", json=payload, headers={"X-Collect-Secret": "test-secret"})
         mock_post.assert_not_called()
 

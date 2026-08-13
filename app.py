@@ -32,9 +32,13 @@ API_BASE = "https://discord.com/api/v10"
 BOT_TOKEN = os.environ["DISCORD_BOT_TOKEN"]
 VERIFY_KEY = VerifyKey(bytes.fromhex(os.environ["DISCORD_PUBLIC_KEY"]))
 COLLECT_SECRET = os.environ["COLLECT_SECRET"]
-# 選填：設了才會在 client 主動要求時（見 /collect 的 announce 欄位）主動推播新收藏到這個頻道。
-# bot 要先被邀進那個伺服器、在那個頻道有發言權限——User Install 不夠，這個一定要真的邀進去才行。
-ANNOUNCE_CHANNEL_ID = os.environ.get("ANNOUNCE_CHANNEL_ID", "")
+# 選填：設了才會在 client 主動要求時（見 /collect 的 announce 欄位）主動推播新收藏——兩個都設的話
+# 同一則會兩邊都發，只設一個就只發那邊，都不設就整個跳過。bot 要先被邀進對應伺服器、在該頻道有發言
+# 權限——User Install 不夠，這個一定要真的邀進去才行。
+ANNOUNCE_CHANNEL_IDS = [c for c in [
+    os.environ.get("TEXT_ANNOUNCE_CHANNEL_ID", ""),
+    os.environ.get("MARUNA_ANNOUNCE_CHANNEL_ID", ""),
+] if c]
 
 APP_ID = os.environ.get("DISCORD_APPLICATION_ID") or requests.get(
     f"{API_BASE}/oauth2/applications/@me", headers={"Authorization": f"Bot {BOT_TOKEN}"}
@@ -165,25 +169,27 @@ def build_link_lines(url):
 def post_announcement(characters, media_type, url):
     # flush=True: waitress/Render 預設會把 stdout 全緩衝，不強制 flush 的話這幾行可能久久不出現在
     # Render 的 Logs 分頁裡（不是沒印，是印了但還卡在緩衝區），害人以為程式碼根本沒跑到這裡。
-    if not ANNOUNCE_CHANNEL_ID:
-        print("[announce] 沒設定 ANNOUNCE_CHANNEL_ID，略過", flush=True)
+    if not ANNOUNCE_CHANNEL_IDS:
+        print("[announce] 沒設定任何推播頻道，略過", flush=True)
         return
     media_label = "影片" if media_type == "video" else "圖片"
     content = f"**{'、'.join(characters)}** 的新{media_label}\n{build_link_lines(url)}"
-    try:
-        r = requests.post(
-            f"{API_BASE}/channels/{ANNOUNCE_CHANNEL_ID}/messages",
-            headers={"Authorization": f"Bot {BOT_TOKEN}"},
-            json={"content": content},
-            timeout=10,
-        )
-        r.raise_for_status()
-        print(f"[announce] 已推播到頻道 {ANNOUNCE_CHANNEL_ID}: {characters}", flush=True)
-    except requests.RequestException as e:
-        # ponytail: best-effort push, swallow errors so a bot-permission/channel-id hiccup never
-        # blocks /collect's actual job (saving the entry) — just log it for later debugging.
-        body = e.response.text if e.response is not None else ""
-        print(f"[announce] 推播失敗: {e} {body}", flush=True)
+    for channel_id in ANNOUNCE_CHANNEL_IDS:
+        # 每個頻道各自 try/except——其中一個頻道 ID 錯或沒權限，不該連累另一個也發不出去。
+        try:
+            r = requests.post(
+                f"{API_BASE}/channels/{channel_id}/messages",
+                headers={"Authorization": f"Bot {BOT_TOKEN}"},
+                json={"content": content},
+                timeout=10,
+            )
+            r.raise_for_status()
+            print(f"[announce] 已推播到頻道 {channel_id}: {characters}", flush=True)
+        except requests.RequestException as e:
+            # ponytail: best-effort push, swallow errors so a bot-permission/channel-id hiccup
+            # never blocks /collect's actual job (saving the entry) — just log for debugging.
+            body = e.response.text if e.response is not None else ""
+            print(f"[announce] 推播失敗（頻道 {channel_id}）: {e} {body}", flush=True)
 
 
 def verify(req):
