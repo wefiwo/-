@@ -163,8 +163,10 @@ def build_link_lines(url):
 
 
 def post_announcement(characters, media_type, url):
+    # flush=True: waitress/Render 預設會把 stdout 全緩衝，不強制 flush 的話這幾行可能久久不出現在
+    # Render 的 Logs 分頁裡（不是沒印，是印了但還卡在緩衝區），害人以為程式碼根本沒跑到這裡。
     if not ANNOUNCE_CHANNEL_ID:
-        print("[announce] 沒設定 ANNOUNCE_CHANNEL_ID，略過")
+        print("[announce] 沒設定 ANNOUNCE_CHANNEL_ID，略過", flush=True)
         return
     media_label = "影片" if media_type == "video" else "圖片"
     content = f"**{'、'.join(characters)}** 的新{media_label}\n{build_link_lines(url)}"
@@ -176,12 +178,12 @@ def post_announcement(characters, media_type, url):
             timeout=10,
         )
         r.raise_for_status()
-        print(f"[announce] 已推播到頻道 {ANNOUNCE_CHANNEL_ID}: {characters}")
+        print(f"[announce] 已推播到頻道 {ANNOUNCE_CHANNEL_ID}: {characters}", flush=True)
     except requests.RequestException as e:
         # ponytail: best-effort push, swallow errors so a bot-permission/channel-id hiccup never
         # blocks /collect's actual job (saving the entry) — just log it for later debugging.
         body = e.response.text if e.response is not None else ""
-        print(f"[announce] 推播失敗: {e} {body}")
+        print(f"[announce] 推播失敗: {e} {body}", flush=True)
 
 
 def verify(req):
