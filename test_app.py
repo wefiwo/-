@@ -67,6 +67,29 @@ class TestCollect(unittest.TestCase):
         self.assertFalse(app_module.delete_entry("秧秧", "https://x.com/nope/status/9"))
         self.assertEqual(len(app_module.load_collected()["秧秧"]), 1)
 
+    def test_find_entry_by_hash_roundtrips(self):
+        entry = {"url": "https://x.com/a/status/1", "author": "a", "type": "photo"}
+        app_module.save_collected({"秧秧": [entry]})
+        found = app_module.find_entry_by_hash("秧秧", app_module.url_hash(entry["url"]))
+        self.assertEqual(found, entry)
+        self.assertIsNone(app_module.find_entry_by_hash("秧秧", "deadbeef0000"))
+
+    def test_build_stats_content_counts_across_characters(self):
+        app_module.save_collected({
+            "秧秧": [
+                {"url": "https://x.com/a/status/1", "author": "a", "type": "photo"},
+                {"url": "https://x.com/a/status/2", "author": "a", "type": "video"},
+            ],
+            "長離": [{"url": "https://x.com/b/status/3", "author": "b", "type": "photo"}],
+        })
+        content = app_module.build_stats_content()
+        self.assertIn("📷 2 張圖片", content)
+        self.assertIn("🎬 1 部影片", content)
+        self.assertIn("2 個有收藏", content)
+        # 金城/景然/瑾軒/達妮婭 in the test HASHTAGS set have nothing collected
+        self.assertIn("4 個還是空的", content)
+        self.assertIn("秧秧 - 2", content)
+
     def test_url_choices_filters_by_author_or_url_substring(self):
         app_module.save_collected({"秧秧": [
             {"url": "https://x.com/artistA/status/1", "author": "artistA", "type": "photo"},

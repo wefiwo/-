@@ -6,6 +6,7 @@ this replaces both the official X API (search needs a paid plan) and scraping (m
 X's anti-bot defenses, which this project won't do). Discord auto-embeds the link itself, no
 download needed.
 """
+import hashlib
 import json
 import os
 import random
@@ -182,6 +183,38 @@ def build_list_content(character, media_type_label):
     return header + "\n" + "\n".join(lines)
 
 
+def url_hash(url):
+    # Discord 的 button custom_id 限 100 字，直接塞完整網址（尤其 FB 那種長網址）風險太大——用短
+    # hash 代替，點擊時再回頭比對找出實際是哪一筆。
+    return hashlib.sha1(url.encode()).hexdigest()[:12]
+
+
+def find_entry_by_hash(character, short_hash):
+    for entry in load_collected().get(character, []):
+        if url_hash(entry["url"]) == short_hash:
+            return entry
+    return None
+
+
+def build_stats_content():
+    data = load_collected()
+    counts = {name: len(data.get(name, [])) for name in HASHTAGS}
+    with_entries = {name: n for name, n in counts.items() if n}
+    total_photo = sum(sum(1 for e in v if e.get("type") == "photo") for v in data.values())
+    total_video = sum(sum(1 for e in v if e.get("type") == "video") for v in data.values())
+
+    lines = [
+        "📊 全部收藏統計",
+        f"共 {len(HASHTAGS)} 個角色，{len(with_entries)} 個有收藏、{len(HASHTAGS) - len(with_entries)} 個還是空的",
+        f"總計：📷 {total_photo} 張圖片、🎬 {total_video} 部影片",
+    ]
+    top = sorted(with_entries.items(), key=lambda kv: kv[1], reverse=True)[:10]
+    if top:
+        lines.append("\n收藏最多的前 10 個：")
+        lines += [f"{i}. {name} - {n}" for i, (name, n) in enumerate(top, 1)]
+    return "\n".join(lines)
+
+
 # vxtwitter.com / kkinstagram.com / facebed.com are free public proxies that redirect straight
 # to the real media file so Discord actually embeds the image/video inline (the real domains
 # don't unfurl reliably there). kkinstagram picked over ddinstagram — the latter 403s now.
@@ -268,11 +301,24 @@ def interactions():
             choices = [{"name": n, "value": n} for n in autocomplete_matches(focused["value"].strip())]
         return jsonify({"type": 8, "data": {"choices": choices}})
 
+    if itype == 3:  # message component (button) clicked
+        custom_id = body["data"]["custom_id"]
+        if custom_id.startswith("del:"):
+            _, character, short_hash = custom_id.split(":", 2)
+            entry = find_entry_by_hash(character, short_hash)
+            if not entry or not delete_entry(character, entry["url"]):
+                return jsonify({"type": 7, "data": {"content": "找不到這筆收藏，可能已經刪除過了。", "components": []}})
+            return jsonify({"type": 7, "data": {"content": f"🗑️ 已從「{character}」的收藏刪除這一則。", "components": []}})
+        return ("", 400)
+
     if itype == 2:  # slash command invoked
         command_name = body["data"]["name"]
         opts = {o["name"]: o["value"] for o in body["data"].get("options", [])}
-        character = opts.get("角色", "")
 
+        if command_name == "抓圖統計":
+            return jsonify({"type": 4, "data": {"content": build_stats_content()}})
+
+        character = opts.get("角色", "")
         if character not in HASHTAGS:
             return jsonify({
                 "type": 4,
@@ -302,7 +348,16 @@ def interactions():
 
         entry = random.choice(pool)
         content = f"**{character}** 的{media_type}\n{build_link_lines(entry['url'])}"
-        return jsonify({"type": 4, "data": {"content": content}})
+        # 🗑️ 按鈕代替反應——這個 bot 沒有常駐的 Gateway 連線，收不到 MESSAGE_REACTION_ADD 事件，
+        # 但按鈕點擊一樣是打 /interactions（type 3），跟其他互動同一條路，不用額外接 WebSocket。
+        components = [{
+            "type": 1,
+            "components": [{
+                "type": 2, "style": 4, "emoji": {"name": "🗑️"},
+                "custom_id": f"del:{character}:{url_hash(entry['url'])}",
+            }],
+        }]
+        return jsonify({"type": 4, "data": {"content": content, "components": components}})
 
     return ("", 400)
 

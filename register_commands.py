@@ -1,5 +1,5 @@
 """Run once (and again whenever a command's options/shape changes) to register the /抓圖,
-/抓圖清單, /抓圖刪除 slash commands."""
+/抓圖清單, /抓圖刪除, /抓圖統計 slash commands."""
 import os
 
 import requests
@@ -45,6 +45,12 @@ commands = [
             CHARACTER_OPTION,
             {"name": "網址", "description": "要刪除的貼文網址", "type": 3, "required": True, "autocomplete": True},
         ],
+    },
+    {
+        **COMMON,
+        "name": "抓圖統計",
+        "description": "看所有角色的收藏概覽",
+        "options": [],
     },
 ]
 
