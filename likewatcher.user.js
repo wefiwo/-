@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         抓圖 Bot - X/IG/FB 按讚自動蒐集
 // @namespace    ponytail
-// @version      4.3
-// @description  在 X、Instagram 或 Facebook 按讚符合角色 Hashtag 的貼文時，自動送去自己的 Discord 機器人後端收藏；X 上轉推則彈出輸入框手動指定角色；Alt+Q/Alt+A 快捷鍵切換本機開關
+// @version      4.4
+// @description  在 X、Instagram 或 Facebook 按讚符合角色 Hashtag 的貼文時，自動送去自己的 Discord 機器人後端收藏；X 上轉推則彈出輸入框手動指定角色；Alt+Q/Alt+W 快捷鍵切換本機開關
 // @match        https://x.com/*
 // @match        https://twitter.com/*
 // @match        https://www.instagram.com/*
@@ -73,7 +73,7 @@
   // 貼文推播到指定的 Discord 頻道（要後端有設 ANNOUNCE_CHANNEL_ID 才有作用）。
   const announceEnabled = registerToggleMenu("自動推播到 Discord 頻道", "announceEnabled");
 
-  // 快捷鍵：Alt+Q 切轉推手動收藏、Alt+A 切自動推播，不用開選單也能切換。輸入框/可編輯區域裡打字時
+  // 快捷鍵：Alt+Q 切轉推手動收藏、Alt+W 切自動推播，不用開選單也能切換。輸入框/可編輯區域裡打字時
   // 不觸發，避免跟打字內容衝突。
   document.addEventListener("keydown", (ev) => {
     if (!ev.altKey || ev.ctrlKey || ev.metaKey || ev.shiftKey) return;
@@ -81,7 +81,7 @@
     if (el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable)) return;
     const key = ev.key.toLowerCase();
     if (key === "q") { ev.preventDefault(); retweetAddEnabled.toggle(); }
-    else if (key === "a") { ev.preventDefault(); announceEnabled.toggle(); }
+    else if (key === "w") { ev.preventDefault(); announceEnabled.toggle(); }
   });
 
   let hashtagsCache = null; // 角色 → Hashtag 對照表，每次載入頁面拉一次就好
