@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         抓圖 Bot - X/IG/FB 按讚自動蒐集
 // @namespace    ponytail
-// @version      4.1
+// @version      4.2
 // @description  在 X、Instagram 或 Facebook 按讚符合角色 Hashtag 的貼文時，自動送去自己的 Discord 機器人後端收藏；X 上轉推則彈出輸入框手動指定角色
 // @match        https://x.com/*
 // @match        https://twitter.com/*
@@ -13,6 +13,7 @@
 // @grant        GM_setValue
 // @grant        GM_getValue
 // @grant        GM_registerMenuCommand
+// @grant        GM_unregisterMenuCommand
 // @connect      *
 // @updateURL    https://raw.githubusercontent.com/wefiwo/-/main/likewatcher.user.js
 // @downloadURL  https://raw.githubusercontent.com/wefiwo/-/main/likewatcher.user.js
@@ -37,29 +38,27 @@
     if (entered) GM_setValue("collectSecret", entered.trim());
   });
 
-  // 轉推手動收藏功能只給你自己這台裝置用——腳本會分享給別人（同一組 COLLECT_SECRET），但這個開關
-  // 存在 Tampermonkey 的本機儲存空間，裝置各自獨立、不會跟著腳本更新同步過去。預設關閉，只有在自己
-  // 這台裝置手動執行過一次下面這個選單指令才會打開；別人裝了同一份腳本，沒人幫他們按這個開關，
-  // 對他們來說這功能就一直是關的。
-  function retweetAddEnabled() {
-    return GM_getValue("retweetAddEnabled", false);
+  // 本機限定開關：狀態存在 Tampermonkey 自己的儲存空間，裝置各自獨立、不會跟著腳本更新同步給別人
+  // （腳本會分享給別人，同一組 COLLECT_SECRET，但這個開關不會）。選單文字前面用 ✅/⬜ 顯示目前狀態，
+  // 每次切換就重新註冊一次選單項目（Tampermonkey 沒有原生的開關 UI 可以用，這是最接近的做法）。
+  function registerToggleMenu(label, key) {
+    let commandId;
+    const render = () => {
+      if (commandId !== undefined) GM_unregisterMenuCommand(commandId);
+      const on = GM_getValue(key, false);
+      commandId = GM_registerMenuCommand(`${on ? "✅" : "⬜"} ${label}（僅本機裝置）`, () => {
+        GM_setValue(key, !on);
+        render();
+      });
+    };
+    render();
+    return () => GM_getValue(key, false);
   }
-  GM_registerMenuCommand("切換：轉推手動收藏功能（僅本機裝置）", () => {
-    const next = !retweetAddEnabled();
-    GM_setValue("retweetAddEnabled", next);
-    alert("轉推手動收藏功能已" + (next ? "開啟" : "關閉") + "（只影響這台裝置）。");
-  });
 
-  // 同一招：預設關閉、本機開關，開了才會在 submitCollect 送出的請求裡多帶一個 announce 旗標，後端
-  // 收到才會主動把這則貼文推播到指定的 Discord 頻道（要後端有設 ANNOUNCE_CHANNEL_ID 才有作用）。
-  function announceEnabled() {
-    return GM_getValue("announceEnabled", false);
-  }
-  GM_registerMenuCommand("切換：自動推播到 Discord 頻道（僅本機裝置）", () => {
-    const next = !announceEnabled();
-    GM_setValue("announceEnabled", next);
-    alert("自動推播已" + (next ? "開啟" : "關閉") + "（只影響這台裝置）。");
-  });
+  const retweetAddEnabled = registerToggleMenu("轉推手動收藏功能", "retweetAddEnabled");
+  // announce 開了才會在 submitCollect 送出的請求裡多帶一個 announce 旗標，後端收到才會主動把這則
+  // 貼文推播到指定的 Discord 頻道（要後端有設 ANNOUNCE_CHANNEL_ID 才有作用）。
+  const announceEnabled = registerToggleMenu("自動推播到 Discord 頻道", "announceEnabled");
 
   let hashtagsCache = null; // 角色 → Hashtag 對照表，每次載入頁面拉一次就好
 
