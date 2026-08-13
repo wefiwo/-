@@ -164,6 +164,7 @@ def build_link_lines(url):
 
 def post_announcement(characters, media_type, url):
     if not ANNOUNCE_CHANNEL_ID:
+        print("[announce] 沒設定 ANNOUNCE_CHANNEL_ID，略過")
         return
     media_label = "影片" if media_type == "video" else "圖片"
     content = f"**{'、'.join(characters)}** 的新{media_label}\n{build_link_lines(url)}"
@@ -175,10 +176,12 @@ def post_announcement(characters, media_type, url):
             timeout=10,
         )
         r.raise_for_status()
+        print(f"[announce] 已推播到頻道 {ANNOUNCE_CHANNEL_ID}: {characters}")
     except requests.RequestException as e:
         # ponytail: best-effort push, swallow errors so a bot-permission/channel-id hiccup never
         # blocks /collect's actual job (saving the entry) — just log it for later debugging.
-        print(f"[announce] 推播失敗: {e}")
+        body = e.response.text if e.response is not None else ""
+        print(f"[announce] 推播失敗: {e} {body}")
 
 
 def verify(req):
