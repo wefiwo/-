@@ -6,3 +6,4 @@ venv/
 .claude/
 collected.json
 twitter_import_progress.json
+twitter_import.lock

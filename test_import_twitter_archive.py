@@ -56,6 +56,24 @@ class TestImportTwitterArchive(unittest.TestCase):
             with self.assertRaises(importer.RateLimited):
                 importer.resolve_media("1", "https://t.co/x")
 
+    def test_main_refuses_to_run_when_lock_already_held(self):
+        # 這是背景執行環境曾經把同一個指令啟動兩份、兩邊搶著寫同一份 progress 檔案那個事故的迴歸測試。
+        importer.LOCK_PATH.touch(exist_ok=False)
+        try:
+            with patch("sys.argv", ["import_twitter_archive.py", "dummy.zip"]), \
+                 patch("import_twitter_archive._run") as mock_run:
+                with self.assertRaises(SystemExit):
+                    importer.main()
+            mock_run.assert_not_called()
+        finally:
+            importer.LOCK_PATH.unlink(missing_ok=True)
+
+    def test_main_releases_lock_after_running(self):
+        with patch("sys.argv", ["import_twitter_archive.py", "dummy.zip"]), \
+             patch("import_twitter_archive._run"):
+            importer.main()
+        self.assertFalse(importer.LOCK_PATH.exists())
+
     def test_parse_archive_strips_js_assignment_prefix(self):
         payload = [{"like": {"tweetId": "1", "fullText": "hi", "expandedUrl": "x"}}]
         raw = "window.YTD.like.part0 = " + json.dumps(payload)

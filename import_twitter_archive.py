@@ -28,6 +28,7 @@ import argparse
 import json
 import os
 import re
+import sys
 import time
 import zipfile
 from pathlib import Path
@@ -108,6 +109,9 @@ def load_progress():
     return {}
 
 
+LOCK_PATH = Path(__file__).parent / "twitter_import.lock"
+
+
 def save_progress(progress):
     with open(PROGRESS_PATH, "w", encoding="utf-8") as f:
         json.dump(progress, f, ensure_ascii=False)
@@ -123,6 +127,23 @@ def main():
                               "（重新檢查之前可能被限流誤判成沒有媒體的那些）")
     args = parser.parse_args()
 
+    # 排它鎖：曾經同一個指令被背景執行環境同時啟動兩份，兩邊搶著讀寫同一份 progress 檔案，後寫的直接
+    # 蓋掉先寫的，白白重工還浪費 t.co 的額度。open(..., "x") 是原子操作，檔案已存在就直接失敗——鎖不到
+    # 就整個不跑，不用猜是不是真的有另一份在跑。
+    try:
+        LOCK_PATH.touch(exist_ok=False)
+    except FileExistsError:
+        print(f"偵測到 {LOCK_PATH} 已存在，代表已經有一份在跑（或上次沒正常結束）——"
+              f"確定沒有其他份在跑的話，手動刪掉這個檔案再重跑。")
+        sys.exit(1)
+
+    try:
+        _run(args)
+    finally:
+        LOCK_PATH.unlink(missing_ok=True)
+
+
+def _run(args):
     hashtags = load_hashtags()
     likes = parse_archive(args.archive)
     print(f"封存檔共 {len(likes)} 則按讚紀錄")
