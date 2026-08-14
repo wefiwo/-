@@ -368,6 +368,14 @@ def get_hashtags():
     return jsonify(HASHTAGS)
 
 
+@app.route("/autocomplete", methods=["GET"])
+def get_autocomplete():
+    """Public, read-only — lets likewatcher.user.js's retweet-add character picker reuse the
+    exact same homophone matching /抓圖's Discord autocomplete uses, instead of re-implementing
+    pinyin matching in JS."""
+    return jsonify(autocomplete_matches(request.args.get("q", "").strip()))
+
+
 @app.route("/collect", methods=["POST"])
 def collect():
     if request.headers.get("X-Collect-Secret") != COLLECT_SECRET:

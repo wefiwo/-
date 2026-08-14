@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         抓圖 Bot - X/IG/FB 按讚自動蒐集
 // @namespace    ponytail
-// @version      4.4
+// @version      4.5
 // @description  在 X、Instagram 或 Facebook 按讚符合角色 Hashtag 的貼文時，自動送去自己的 Discord 機器人後端收藏；X 上轉推則彈出輸入框手動指定角色；Alt+Q/Alt+W 快捷鍵切換本機開關
 // @match        https://x.com/*
 // @match        https://twitter.com/*
@@ -301,27 +301,120 @@
     // 去，後端自然就會各自比對成功、一次存進所有指定角色，不用另外開一支後端 API、也不用送好幾次。
     let pendingRetweetArticle = null;
 
-    // 輸入可以一次填好幾個角色，中間用空格或任何標點隔開就好（例如「漂泊者 愛彌斯」）——先用空格/標點
-    // 切成一串詞，再從最長的組合開始比對已知角色名，比對到就吃掉那幾個詞、繼續往後找。這樣「Mori
-    // Calliope」這種名字本身帶空格的角色也不會被誤切開（兩個詞合起來比對得到，就不會拆成兩個角色）。
-    function parseCharacterNames(input, tags) {
-      const tokens = input.split(/[\s,，、。.\/·・;；:：]+/).filter(Boolean);
-      const names = [];
-      const unknown = [];
-      for (let i = 0; i < tokens.length; ) {
-        let matchLen = 0;
-        for (let len = tokens.length - i; len >= 1; len--) {
-          if (tags[tokens.slice(i, i + len).join(" ")]) { matchLen = len; break; }
-        }
-        if (matchLen) {
-          names.push(tokens.slice(i, i + matchLen).join(" "));
-          i += matchLen;
-        } else {
-          unknown.push(tokens[i]);
-          i += 1;
-        }
+    // 選角色用的小視窗：輸入時即時打後端 /autocomplete（跟 Discord /抓圖 用同一套 autocomplete_matches
+    // 同音字比對，不用在前端另外重刻一份拼音邏輯），選到的角色變成標籤，可以一次選多個再一起送出。
+    function fetchAutocomplete(query, cb) {
+      if (!query) return cb([]);
+      GM_xmlhttpRequest({
+        method: "GET",
+        url: BACKEND_URL + "/autocomplete?q=" + encodeURIComponent(query),
+        onload: (res) => { try { cb(JSON.parse(res.responseText)); } catch (e) { cb([]); } },
+        onerror: () => cb([]),
+      });
+    }
+
+    function pickCharacters(tags, cb) {
+      const overlay = document.createElement("div");
+      overlay.style.cssText = "position:fixed;inset:0;z-index:2147483647;background:rgba(0,0,0,.5);"
+        + "display:flex;align-items:center;justify-content:center;font:14px sans-serif;";
+
+      const box = document.createElement("div");
+      box.style.cssText = "background:#15202b;color:#fff;padding:16px;border-radius:10px;width:320px;"
+        + "box-shadow:0 4px 20px rgba(0,0,0,.4);";
+      box.innerHTML = '<div style="margin-bottom:8px;font-weight:bold;">轉推收藏——選角色（可選多個，支援同音字）</div>';
+
+      const chipRow = document.createElement("div");
+      chipRow.style.cssText = "display:flex;flex-wrap:wrap;gap:4px;margin-bottom:6px;min-height:24px;";
+
+      const input = document.createElement("input");
+      input.placeholder = "輸入角色名";
+      input.style.cssText = "width:100%;box-sizing:border-box;padding:6px;border-radius:6px;"
+        + "border:1px solid #38444d;background:#192734;color:#fff;outline:none;";
+
+      const list = document.createElement("div");
+      list.style.cssText = "max-height:160px;overflow-y:auto;margin-top:4px;";
+
+      const btnRow = document.createElement("div");
+      btnRow.style.cssText = "display:flex;justify-content:flex-end;gap:8px;margin-top:10px;";
+      const cancelBtn = document.createElement("button");
+      cancelBtn.textContent = "取消";
+      const okBtn = document.createElement("button");
+      okBtn.textContent = "確定";
+      [cancelBtn, okBtn].forEach((b) => {
+        b.style.cssText = "padding:6px 14px;border-radius:16px;border:none;cursor:pointer;font:14px sans-serif;color:#fff;";
+      });
+      okBtn.style.background = "#1d9bf0";
+      cancelBtn.style.background = "#38444d";
+      btnRow.append(cancelBtn, okBtn);
+
+      box.append(chipRow, input, list, btnRow);
+      overlay.append(box);
+      document.body.append(overlay);
+      input.focus();
+
+      const picked = [];
+      let currentMatches = [];
+      let highlightIndex = -1;
+
+      function renderChips() {
+        chipRow.innerHTML = "";
+        picked.forEach((name) => {
+          const chip = document.createElement("span");
+          chip.textContent = name + " ✕";
+          chip.style.cssText = "background:#1d9bf0;color:#fff;padding:2px 8px;border-radius:12px;cursor:pointer;";
+          chip.onclick = () => { picked.splice(picked.indexOf(name), 1); renderChips(); };
+          chipRow.appendChild(chip);
+        });
       }
-      return { names, unknown };
+
+      function renderList() {
+        list.innerHTML = "";
+        currentMatches.forEach((name, i) => {
+          const item = document.createElement("div");
+          item.textContent = name;
+          item.style.cssText = "padding:6px 8px;border-radius:6px;cursor:pointer;" + (i === highlightIndex ? "background:#1d9bf0;" : "");
+          item.onclick = () => selectMatch(name);
+          list.appendChild(item);
+        });
+      }
+
+      function selectMatch(name) {
+        if (!picked.includes(name)) picked.push(name);
+        renderChips();
+        input.value = "";
+        currentMatches = [];
+        highlightIndex = -1;
+        renderList();
+        input.focus();
+      }
+
+      let debounceTimer;
+      input.addEventListener("input", () => {
+        clearTimeout(debounceTimer);
+        const q = input.value.trim();
+        if (!q) { currentMatches = []; highlightIndex = -1; return renderList(); }
+        debounceTimer = setTimeout(() => {
+          fetchAutocomplete(q, (matches) => {
+            currentMatches = matches;
+            highlightIndex = matches.length ? 0 : -1;
+            renderList();
+          });
+        }, 150);
+      });
+
+      input.addEventListener("keydown", (ev) => {
+        if (ev.key === "ArrowDown") { ev.preventDefault(); highlightIndex = Math.min(highlightIndex + 1, currentMatches.length - 1); renderList(); }
+        else if (ev.key === "ArrowUp") { ev.preventDefault(); highlightIndex = Math.max(highlightIndex - 1, 0); renderList(); }
+        else if (ev.key === "Enter") {
+          ev.preventDefault();
+          if (highlightIndex >= 0 && currentMatches[highlightIndex]) selectMatch(currentMatches[highlightIndex]);
+          else if (tags[input.value.trim()]) selectMatch(input.value.trim()); // 網路慢/沒跳出清單時的退路：打完整正確名字直接按 Enter 也算
+        } else if (ev.key === "Escape") { ev.preventDefault(); cleanup(); cb(null); }
+      });
+
+      function cleanup() { overlay.remove(); }
+      cancelBtn.onclick = () => { cleanup(); cb(null); };
+      okBtn.onclick = () => { cleanup(); cb(picked); };
     }
 
     function promptManualAdd(article, tags) {
@@ -331,15 +424,11 @@
       const link = extractTweetLink(article);
       if (!link) return alert("抓不到這則貼文的連結，無法加入收藏（選擇器可能要調整）。");
 
-      const input = prompt("轉推收藏——輸入角色名稱（可空格/標點分隔多個，例如「漂泊者 愛彌斯」，要跟 hashtags.json 一致）：")?.trim();
-      if (!input) return;
-
-      const { names, unknown } = parseCharacterNames(input, tags);
-      if (unknown.length) alert(`以下沒對到已知角色，已略過：${unknown.join("、")}`);
-      if (!names.length) return;
-
-      const text = names.map((name) => `#${tags[name][0].replace(/^#/, "")}`).join(" ");
-      submitCollect("[抓圖收藏][轉推]", { url: link.url, author: link.author, text, mediaType, chars: names });
+      pickCharacters(tags, (names) => {
+        if (!names || !names.length) return;
+        const text = names.map((name) => `#${tags[name][0].replace(/^#/, "")}`).join(" ");
+        submitCollect("[抓圖收藏][轉推]", { url: link.url, author: link.author, text, mediaType, chars: names });
+      });
     }
 
     document.addEventListener(

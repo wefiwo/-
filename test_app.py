@@ -245,6 +245,11 @@ class TestCollect(unittest.TestCase):
             self.client.post("/collect", json=payload, headers={"X-Collect-Secret": "test-secret"})
         mock_post.assert_not_called()
 
+    def test_get_autocomplete_endpoint_returns_matches(self):
+        r = self.client.get("/autocomplete", query_string={"q": "央"})
+        self.assertEqual(r.status_code, 200)
+        self.assertIn("秧秧", r.get_json())
+
     def test_autocomplete_matches_homophone(self):
         # 秧秧 is pinyin "yangyang"; 央 is a homophone of 秧 (both "yang") but a different character.
         self.assertIn("秧秧", app_module.autocomplete_matches("央"))
