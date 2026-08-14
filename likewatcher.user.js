@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         抓圖 Bot - X/IG/FB 按讚自動蒐集
 // @namespace    ponytail
-// @version      4.6
+// @version      4.7
 // @description  在 X、Instagram 或 Facebook 按讚符合角色 Hashtag 的貼文時，自動送去自己的 Discord 機器人後端收藏；X 上轉推則彈出輸入框手動指定角色；Alt+Q/Alt+W 快捷鍵切換本機開關
 // @match        https://x.com/*
 // @match        https://twitter.com/*
@@ -38,11 +38,18 @@
     if (entered) GM_setValue("collectSecret", entered.trim());
   });
 
+  // create-element + inline-style 這組動作在 showToast、pickCharacters 裡重複出現超過十次，抽成
+  // 一個小工具函式，呼叫端縮成一行。
+  function makeEl(tag, cssText, text) {
+    const node = document.createElement(tag);
+    if (cssText) node.style.cssText = cssText;
+    if (text !== undefined) node.textContent = text;
+    return node;
+  }
+
   function showToast(text) {
-    const el = document.createElement("div");
-    el.textContent = text;
-    el.style.cssText = "position:fixed;top:16px;right:16px;z-index:2147483647;background:#1d9bf0;"
-      + "color:#fff;padding:8px 14px;border-radius:6px;font:14px sans-serif;box-shadow:0 2px 8px rgba(0,0,0,.3);";
+    const el = makeEl("div", "position:fixed;top:16px;right:16px;z-index:2147483647;background:#1d9bf0;"
+      + "color:#fff;padding:8px 14px;border-radius:6px;font:14px sans-serif;box-shadow:0 2px 8px rgba(0,0,0,.3);", text);
     document.body.appendChild(el);
     setTimeout(() => el.remove(), 1500);
   }
@@ -314,40 +321,29 @@
     }
 
     function pickCharacters(tags, cb) {
-      const overlay = document.createElement("div");
-      overlay.style.cssText = "position:fixed;inset:0;z-index:2147483647;background:rgba(0,0,0,.5);"
-        + "display:flex;align-items:center;justify-content:center;font:14px sans-serif;";
+      const overlay = makeEl("div", "position:fixed;inset:0;z-index:2147483647;background:rgba(0,0,0,.5);"
+        + "display:flex;align-items:center;justify-content:center;font:14px sans-serif;");
 
-      const box = document.createElement("div");
-      box.style.cssText = "background:#15202b;color:#fff;padding:16px;border-radius:10px;width:320px;"
-        + "box-shadow:0 4px 20px rgba(0,0,0,.4);";
-      box.innerHTML = '<div style="margin-bottom:8px;font-weight:bold;">轉推收藏——選角色（可選多個，支援同音字）</div>';
+      const box = makeEl("div", "background:#15202b;color:#fff;padding:16px;border-radius:10px;width:320px;"
+        + "box-shadow:0 4px 20px rgba(0,0,0,.4);");
+      const title = makeEl("div", "margin-bottom:8px;font-weight:bold;", "轉推收藏——選角色（可選多個，支援同音字）");
 
-      const chipRow = document.createElement("div");
-      chipRow.style.cssText = "display:flex;flex-wrap:wrap;gap:4px;margin-bottom:6px;min-height:24px;";
+      const chipRow = makeEl("div", "display:flex;flex-wrap:wrap;gap:4px;margin-bottom:6px;min-height:24px;");
 
-      const input = document.createElement("input");
+      const input = document.createElement("input"); // 需要 .placeholder，不走 makeEl
       input.placeholder = "輸入角色名";
       input.style.cssText = "width:100%;box-sizing:border-box;padding:6px;border-radius:6px;"
         + "border:1px solid #38444d;background:#192734;color:#fff;outline:none;";
 
-      const list = document.createElement("div");
-      list.style.cssText = "max-height:160px;overflow-y:auto;margin-top:4px;";
+      const list = makeEl("div", "max-height:160px;overflow-y:auto;margin-top:4px;");
 
-      const btnRow = document.createElement("div");
-      btnRow.style.cssText = "display:flex;justify-content:flex-end;gap:8px;margin-top:10px;";
-      const cancelBtn = document.createElement("button");
-      cancelBtn.textContent = "取消";
-      const okBtn = document.createElement("button");
-      okBtn.textContent = "確定";
-      [cancelBtn, okBtn].forEach((b) => {
-        b.style.cssText = "padding:6px 14px;border-radius:16px;border:none;cursor:pointer;font:14px sans-serif;color:#fff;";
-      });
-      okBtn.style.background = "#1d9bf0";
-      cancelBtn.style.background = "#38444d";
+      const BTN_STYLE = "padding:6px 14px;border-radius:16px;border:none;cursor:pointer;font:14px sans-serif;color:#fff;";
+      const btnRow = makeEl("div", "display:flex;justify-content:flex-end;gap:8px;margin-top:10px;");
+      const cancelBtn = makeEl("button", BTN_STYLE + "background:#38444d;", "取消");
+      const okBtn = makeEl("button", BTN_STYLE + "background:#1d9bf0;", "確定");
       btnRow.append(cancelBtn, okBtn);
 
-      box.append(chipRow, input, list, btnRow);
+      box.append(title, chipRow, input, list, btnRow);
       overlay.append(box);
       document.body.append(overlay);
       // 這個視窗是在轉推確認選單關閉後的同一個 click 事件裡跳出來的，X 自己的 SPA 常常會在事件處理
@@ -361,9 +357,7 @@
       function renderChips() {
         chipRow.innerHTML = "";
         picked.forEach((name) => {
-          const chip = document.createElement("span");
-          chip.textContent = name + " ✕";
-          chip.style.cssText = "background:#1d9bf0;color:#fff;padding:2px 8px;border-radius:12px;cursor:pointer;";
+          const chip = makeEl("span", "background:#1d9bf0;color:#fff;padding:2px 8px;border-radius:12px;cursor:pointer;", name + " ✕");
           chip.onclick = () => { picked.splice(picked.indexOf(name), 1); renderChips(); };
           chipRow.appendChild(chip);
         });
@@ -372,9 +366,7 @@
       function renderList() {
         list.innerHTML = "";
         currentMatches.forEach((name, i) => {
-          const item = document.createElement("div");
-          item.textContent = name;
-          item.style.cssText = "padding:6px 8px;border-radius:6px;cursor:pointer;" + (i === highlightIndex ? "background:#1d9bf0;" : "");
+          const item = makeEl("div", "padding:6px 8px;border-radius:6px;cursor:pointer;" + (i === highlightIndex ? "background:#1d9bf0;" : ""), name);
           item.onclick = () => selectMatch(name);
           list.appendChild(item);
         });
