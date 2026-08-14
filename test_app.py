@@ -67,44 +67,32 @@ class TestCollect(unittest.TestCase):
         self.assertFalse(app_module.delete_entry("秧秧", "https://x.com/nope/status/9"))
         self.assertEqual(len(app_module.load_collected()["秧秧"]), 1)
 
-    def test_delete_entry_by_hash_removes_matching_entry(self):
-        entry = {"url": "https://x.com/a/status/1", "author": "a", "type": "photo"}
-        app_module.save_collected({"秧秧": [entry]})
-        deleted = app_module.delete_entry_by_hash("秧秧", app_module.url_hash(entry["url"]))
-        self.assertEqual(deleted, entry)
-        self.assertEqual(app_module.load_collected()["秧秧"], [])
-
-    def test_delete_entry_by_hash_returns_none_when_not_found(self):
-        entry = {"url": "https://x.com/a/status/1", "author": "a", "type": "photo"}
-        app_module.save_collected({"秧秧": [entry]})
-        self.assertIsNone(app_module.delete_entry_by_hash("秧秧", "deadbeef0000"))
-        self.assertEqual(len(app_module.load_collected()["秧秧"]), 1)
-
     def test_build_pick_reply_single_entry_has_no_numbering(self):
         entries = [{"url": "https://x.com/a/status/1", "author": "a", "type": "photo"}]
-        content, components = app_module.build_pick_reply("秧秧", "圖片", entries)
+        content, followups = app_module.build_pick_reply("秧秧", "圖片", entries)
         self.assertNotIn("1. ", content)
-        self.assertEqual(len(components), 1)
-        self.assertEqual(len(components[0]["components"]), 1)
-        self.assertNotIn("label", components[0]["components"][0])
+        self.assertEqual(followups, [])
 
     def test_build_pick_reply_multiple_entries_are_numbered(self):
         entries = [
             {"url": "https://x.com/a/status/1", "author": "a", "type": "photo"},
             {"url": "https://x.com/b/status/2", "author": "b", "type": "photo"},
         ]
-        content, components = app_module.build_pick_reply("秧秧", "圖片", entries)
+        content, followups = app_module.build_pick_reply("秧秧", "圖片", entries)
         self.assertIn("1. ", content)
         self.assertIn("2. ", content)
         self.assertIn("（2 張）", content)
-        buttons = components[0]["components"]
-        self.assertEqual([b["label"] for b in buttons], ["1", "2"])
-        self.assertNotEqual(buttons[0]["custom_id"], buttons[1]["custom_id"])
+        self.assertEqual(followups, [])
 
-    def test_build_pick_reply_splits_buttons_across_action_rows(self):
+    def test_build_pick_reply_splits_beyond_five_into_followups(self):
+        # Discord 只幫一則訊息裡的前 5 個連結產生預覽圖，第 6~10 張要拆成 follow-up 訊息。
         entries = [{"url": f"https://x.com/a/status/{i}", "author": "a", "type": "photo"} for i in range(7)]
-        _, components = app_module.build_pick_reply("秧秧", "圖片", entries)
-        self.assertEqual([len(row["components"]) for row in components], [5, 2])
+        content, followups = app_module.build_pick_reply("秧秧", "圖片", entries)
+        self.assertIn("5. ", content)
+        self.assertNotIn("6. ", content)
+        self.assertEqual(len(followups), 1)
+        self.assertIn("6. ", followups[0])
+        self.assertIn("7. ", followups[0])
 
     def test_build_stats_content_counts_across_characters(self):
         app_module.save_collected({

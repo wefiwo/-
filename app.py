@@ -6,11 +6,11 @@ this replaces both the official X API (search needs a paid plan) and scraping (m
 X's anti-bot defenses, which this project won't do). Discord auto-embeds the link itself, no
 download needed.
 """
-import hashlib
 import json
 import os
 import random
 import re
+import threading
 from pathlib import Path
 
 import requests
@@ -190,27 +190,6 @@ def build_list_content(character, media_type_label):
     return header + "\n" + "\n".join(lines)
 
 
-def url_hash(url):
-    # Discord 的 button custom_id 限 100 字，直接塞完整網址（尤其 FB 那種長網址）風險太大——用短
-    # hash 代替，點擊時再回頭比對找出實際是哪一筆。
-    return hashlib.sha1(url.encode()).hexdigest()[:12]
-
-
-def delete_entry_by_hash(character, short_hash):
-    # 🗑️ 按鈕點擊要在 Discord 的 3 秒回應時限內做完，不能像原本那樣「先讀一次找是哪一筆、再呼叫
-    # delete_entry 重新讀一次、寫一次」——一次點擊三趟 Upstash 太容易超時（尤其 Render 免費方案剛從
-    # 休眠喚醒的時候），改成一次讀、原地篩、一次寫，找跟刪合成同一趟。
-    data = load_collected()
-    bucket = data.get(character, [])
-    remaining = [e for e in bucket if url_hash(e["url"]) != short_hash]
-    if len(remaining) == len(bucket):
-        return None
-    deleted = next(e for e in bucket if url_hash(e["url"]) == short_hash)
-    data[character] = remaining
-    save_collected(data)
-    return deleted
-
-
 def build_stats_content():
     data = load_collected()
     counts = {name: len(data.get(name, [])) for name in HASHTAGS}
@@ -263,30 +242,31 @@ def build_link_lines(url):
     return fix_embed_url(url)
 
 
+def build_pick_reply(character, media_type, entries):
+    # 一次抽超過一張才編號——單張的話原本就沒有「是哪一張」的疑問，維持原樣。
+    numbered = len(entries) > 1
+    lines = [(f"{i}. " if numbered else "") + build_link_lines(e["url"]) for i, e in enumerate(entries, 1)]
+    suffix = f"（{len(entries)} 張）" if numbered else ""
+    header = f"**{character}** 的{media_type}{suffix}\n"
+    # Discord 一則訊息只會自動幫前 5 個連結產生預覽圖，超過的連結雖然還是點得開，但不會有圖——數量
+    # 選到 10 張時，超過 5 的部分拆成後續的 webhook follow-up message（各自也在 5 則以內），才會每張
+    # 都有預覽。follow-up 沒有 3 秒回應時限，交給呼叫端非同步送。
+    chunks = _chunks(lines, 5)
+    return header + "\n\n".join(chunks[0]), ["\n\n".join(c) for c in chunks[1:]]
+
+
 def _chunks(seq, size):
     return [seq[i:i + size] for i in range(0, len(seq), size)]
 
 
-def build_pick_reply(character, media_type, entries):
-    # 一次抽超過一張才編號、才在按鈕上加數字標籤——單張的話原本就沒有「是哪一張」的疑問，維持原樣。
-    numbered = len(entries) > 1
-    lines = [(f"{i}. " if numbered else "") + build_link_lines(e["url"]) for i, e in enumerate(entries, 1)]
-    suffix = f"（{len(entries)} 張）" if numbered else ""
-    content = f"**{character}** 的{media_type}{suffix}\n" + "\n\n".join(lines)
-
-    # 🗑️ 按鈕代替反應——這個 bot 沒有常駐的 Gateway 連線，收不到 MESSAGE_REACTION_ADD 事件，
-    # 但按鈕點擊一樣是打 /interactions（type 3），跟其他互動同一條路，不用額外接 WebSocket。
-    # 一個 ActionRow 最多 5 顆按鈕，超過就分成第二排——最多抽 10 張，兩排就夠。
-    buttons = [
-        {
-            "type": 2, "style": 4, "emoji": {"name": "🗑️"},
-            **({"label": str(i)} if numbered else {}),
-            "custom_id": f"del:{character}:{url_hash(e['url'])}",
-        }
-        for i, e in enumerate(entries, 1)
-    ]
-    components = [{"type": 1, "components": row} for row in _chunks(buttons, 5)]
-    return content, components
+def send_followups(token, contents):
+    for content in contents:
+        try:
+            requests.post(f"{API_BASE}/webhooks/{APP_ID}/{token}", json={"content": content}, timeout=10)
+        except requests.RequestException as e:
+            # ponytail: best-effort, same as post_announcement — a failed follow-up just means
+            # that chunk of pictures doesn't show up, not worth retrying.
+            print(f"[followup] 送出失敗: {e}", flush=True)
 
 
 def post_announcement(characters, media_type, url):
@@ -342,15 +322,6 @@ def interactions():
             choices = [{"name": n, "value": n} for n in autocomplete_matches(focused["value"].strip())]
         return jsonify({"type": 8, "data": {"choices": choices}})
 
-    if itype == 3:  # message component (button) clicked
-        custom_id = body["data"]["custom_id"]
-        if custom_id.startswith("del:"):
-            _, character, short_hash = custom_id.split(":", 2)
-            if not delete_entry_by_hash(character, short_hash):
-                return jsonify({"type": 7, "data": {"content": "找不到這筆收藏，可能已經刪除過了。", "components": []}})
-            return jsonify({"type": 7, "data": {"content": f"🗑️ 已從「{character}」的收藏刪除這一則。", "components": []}})
-        return ("", 400)
-
     if itype == 2:  # slash command invoked
         command_name = body["data"]["name"]
         opts = {o["name"]: o["value"] for o in body["data"].get("options", [])}
@@ -387,10 +358,12 @@ def interactions():
             })
 
         picks = random.sample(pool, min(count, len(pool)))
-        content, components = build_pick_reply(character, media_type, picks)
+        content, followups = build_pick_reply(character, media_type, picks)
         if len(picks) < count:
             content += f"\n（收藏只有 {len(picks)} 張，全部都在這了）"
-        return jsonify({"type": 4, "data": {"content": content, "components": components}})
+        if followups:
+            threading.Thread(target=send_followups, args=(body["token"], followups), daemon=True).start()
+        return jsonify({"type": 4, "data": {"content": content}})
 
     return ("", 400)
 
