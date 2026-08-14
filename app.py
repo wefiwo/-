@@ -145,6 +145,14 @@ def delete_entry(character, url):
     return True
 
 
+def media_emoji(entry_type):
+    return "🎬" if entry_type == "video" else "📷"
+
+
+def type_from_label(media_type_label):
+    return "video" if media_type_label == "影片" else "photo"
+
+
 def url_choices(character, query):
     # /抓圖刪除 的「網址」欄位自動完成——照選好的角色列出收藏的貼文，用網址或作者子字串篩選，不用先
     # 跑 /抓圖清單 複製貼上。Discord 的 choice name/value 都限 100 字，URL 理論上不會超過但保險截斷。
@@ -153,7 +161,7 @@ def url_choices(character, query):
     matches = [e for e in entries if query in e["url"].lower() or query in (e.get("author") or "").lower()]
     return [
         {
-            "name": f"{'🎬' if e['type'] == 'video' else '📷'} {e.get('author') or '?'} - {e['url']}"[:100],
+            "name": f"{media_emoji(e['type'])} {e.get('author') or '?'} - {e['url']}"[:100],
             "value": e["url"][:100],
         }
         for e in matches[:25]
@@ -168,14 +176,13 @@ def build_list_content(character, media_type_label):
 
     shown = all_entries
     if media_type_label:
-        want = "video" if media_type_label == "影片" else "photo"
-        shown = [e for e in shown if e.get("type") == want]
+        shown = [e for e in shown if e.get("type") == type_from_label(media_type_label)]
     if not shown:
         return header
 
     limit = 15
     lines = [
-        f"{i}. {'🎬' if e['type'] == 'video' else '📷'} [{e.get('author') or '?'}]({e['url']})"
+        f"{i}. {media_emoji(e['type'])} [{e.get('author') or '?'}]({e['url']})"
         for i, e in enumerate(shown[:limit], 1)
     ]
     if len(shown) > limit:
@@ -338,8 +345,7 @@ def interactions():
             return jsonify({"type": 4, "data": {"content": f"已從「{character}」的收藏刪除：{target_url}"}})
 
         media_type = opts.get("類型", "圖片")
-        want = "video" if media_type == "影片" else "photo"
-        pool = [e for e in load_collected().get(character, []) if e.get("type") == want]
+        pool = [e for e in load_collected().get(character, []) if e.get("type") == type_from_label(media_type)]
         if not pool:
             return jsonify({
                 "type": 4,
