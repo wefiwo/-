@@ -5,3 +5,4 @@ __pycache__/
 venv/
 .claude/
 collected.json
+twitter_import_progress.json
