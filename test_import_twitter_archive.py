@@ -2,8 +2,10 @@
 import io
 import json
 import os
+import tempfile
 import unittest
 import zipfile
+from pathlib import Path
 from unittest.mock import Mock, patch
 
 os.environ.setdefault("COLLECT_SECRET", "test-secret")  # the module reads this at import time
@@ -58,21 +60,29 @@ class TestImportTwitterArchive(unittest.TestCase):
 
     def test_main_refuses_to_run_when_lock_already_held(self):
         # 這是背景執行環境曾經把同一個指令啟動兩份、兩邊搶著寫同一份 progress 檔案那個事故的迴歸測試。
-        importer.LOCK_PATH.touch(exist_ok=False)
+        # 用暫存路徑代替真正的 LOCK_PATH——這支測試常常跟真的匯入程序同時跑，共用同一個檔案會互相卡到。
+        test_lock = Path(tempfile.mktemp(suffix=".lock"))
+        test_lock.touch(exist_ok=False)
         try:
-            with patch("sys.argv", ["import_twitter_archive.py", "dummy.zip"]), \
+            with patch.object(importer, "LOCK_PATH", test_lock), \
+                 patch("sys.argv", ["import_twitter_archive.py", "dummy.zip"]), \
                  patch("import_twitter_archive._run") as mock_run:
                 with self.assertRaises(SystemExit):
                     importer.main()
             mock_run.assert_not_called()
         finally:
-            importer.LOCK_PATH.unlink(missing_ok=True)
+            test_lock.unlink(missing_ok=True)
 
     def test_main_releases_lock_after_running(self):
-        with patch("sys.argv", ["import_twitter_archive.py", "dummy.zip"]), \
-             patch("import_twitter_archive._run"):
-            importer.main()
-        self.assertFalse(importer.LOCK_PATH.exists())
+        test_lock = Path(tempfile.mktemp(suffix=".lock"))
+        try:
+            with patch.object(importer, "LOCK_PATH", test_lock), \
+                 patch("sys.argv", ["import_twitter_archive.py", "dummy.zip"]), \
+                 patch("import_twitter_archive._run"):
+                importer.main()
+            self.assertFalse(test_lock.exists())
+        finally:
+            test_lock.unlink(missing_ok=True)
 
     def test_parse_archive_strips_js_assignment_prefix(self):
         payload = [{"like": {"tweetId": "1", "fullText": "hi", "expandedUrl": "x"}}]
