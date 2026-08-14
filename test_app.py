@@ -67,6 +67,13 @@ class TestCollect(unittest.TestCase):
         self.assertFalse(app_module.delete_entry("秧秧", "https://x.com/nope/status/9"))
         self.assertEqual(len(app_module.load_collected()["秧秧"]), 1)
 
+    def test_delete_entry_matches_the_vxtwitter_link_shown_in_replies(self):
+        # /抓圖 的回覆秀出的是 fix_embed_url() 轉過的 vxtwitter.com 連結，使用者複製貼上那個網址進來
+        # 刪也要能對上 collected.json 裡存的原始 x.com 網址。
+        app_module.save_collected({"秧秧": [{"url": "https://x.com/a/status/1", "author": "a", "type": "photo"}]})
+        self.assertTrue(app_module.delete_entry("秧秧", "https://vxtwitter.com/a/status/1"))
+        self.assertEqual(app_module.load_collected()["秧秧"], [])
+
     def test_build_pick_reply_single_entry_has_no_numbering(self):
         entries = [{"url": "https://x.com/a/status/1", "author": "a", "type": "photo"}]
         content, followups = app_module.build_pick_reply("秧秧", "圖片", entries)

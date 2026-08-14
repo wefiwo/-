@@ -135,9 +135,13 @@ def save_collected(data):
 
 
 def delete_entry(character, url):
+    # X/FB 貼文在 /抓圖 的回覆裡顯示的是 fix_embed_url() 轉過的 vxtwitter.com/facebed.com 連結（見
+    # build_link_lines）——使用者手動複製貼上那個網址進來刪，不會等於 collected.json 裡存的原始
+    # x.com/facebook.com 網址。兩邊都跑一次 fix_embed_url() 再比對，兩種網址都能對上同一筆。
     data = load_collected()
     bucket = data.get(character, [])
-    remaining = [e for e in bucket if e["url"] != url]
+    target = fix_embed_url(url)
+    remaining = [e for e in bucket if fix_embed_url(e["url"]) != target]
     if len(remaining) == len(bucket):
         return False
     data[character] = remaining
