@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         抓圖 Bot - X/IG/FB 按讚自動蒐集
 // @namespace    ponytail
-// @version      4.5
+// @version      4.6
 // @description  在 X、Instagram 或 Facebook 按讚符合角色 Hashtag 的貼文時，自動送去自己的 Discord 機器人後端收藏；X 上轉推則彈出輸入框手動指定角色；Alt+Q/Alt+W 快捷鍵切換本機開關
 // @match        https://x.com/*
 // @match        https://twitter.com/*
@@ -350,7 +350,9 @@
       box.append(chipRow, input, list, btnRow);
       overlay.append(box);
       document.body.append(overlay);
-      input.focus();
+      // 這個視窗是在轉推確認選單關閉後的同一個 click 事件裡跳出來的，X 自己的 SPA 常常會在事件處理
+      // 完之後才把焦點搶回去自己的畫面——同一輪呼叫的 focus() 會被蓋掉，delay 一下讓 X 先搶完再輪到我們。
+      setTimeout(() => input.focus(), 50);
 
       const picked = [];
       let currentMatches = [];
