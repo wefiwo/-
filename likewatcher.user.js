@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         抓圖 Bot - X/IG/FB 按讚自動蒐集
 // @namespace    ponytail
-// @version      4.7
+// @version      4.8
 // @description  在 X、Instagram 或 Facebook 按讚符合角色 Hashtag 的貼文時，自動送去自己的 Discord 機器人後端收藏；X 上轉推則彈出輸入框手動指定角色；Alt+Q/Alt+W 快捷鍵切換本機開關
 // @match        https://x.com/*
 // @match        https://twitter.com/*
@@ -403,6 +403,7 @@
           ev.preventDefault();
           if (highlightIndex >= 0 && currentMatches[highlightIndex]) selectMatch(currentMatches[highlightIndex]);
           else if (tags[input.value.trim()]) selectMatch(input.value.trim()); // 網路慢/沒跳出清單時的退路：打完整正確名字直接按 Enter 也算
+          else if (!input.value.trim() && picked.length) { cleanup(); cb(picked); } // 輸入框是空的、已經選了至少一個角色，Enter 就當按確定，不用再點滑鼠
         } else if (ev.key === "Escape") { ev.preventDefault(); cleanup(); cb(null); }
       });
 
