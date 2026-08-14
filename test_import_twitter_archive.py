@@ -41,7 +41,9 @@ class TestImportTwitterArchive(unittest.TestCase):
         ok_response = Mock(status_code=301, headers={"location": "https://twitter.com/a/status/1/photo/1"})
         with patch("import_twitter_archive.requests.head", side_effect=[rate_limited, rate_limited, ok_response]), \
              patch("import_twitter_archive.time.sleep"):
-            location = importer.fetch_redirect_location("https://t.co/x")
+            # max_retries 明講，不依賴預設值——預設值是特意壓低的速度/耐心取捨（少等、卡住的快點丟去
+            # retry_later，讓外層繼續跑下一則），跟這裡要測的「重試最終會成功」是兩件事。
+            location = importer.fetch_redirect_location("https://t.co/x", max_retries=3)
         self.assertEqual(location, "https://twitter.com/a/status/1/photo/1")
 
     def test_fetch_redirect_location_raises_rate_limited_after_exhausting_retries(self):

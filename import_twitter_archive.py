@@ -37,6 +37,7 @@ import requests
 from dotenv import load_dotenv
 
 load_dotenv()
+sys.stdout.reconfigure(line_buffering=True)  # 背景執行時 stdout 預設整批緩衝，這樣才能即時看到進度
 
 BACKEND_URL = "https://twitterlian-dong-dcshou-tu-bot.onrender.com"
 COLLECT_SECRET = os.environ["COLLECT_SECRET"]
@@ -69,10 +70,12 @@ def parse_archive(zip_path):
     return [item["like"] for item in json.loads(json_str)]
 
 
-def fetch_redirect_location(tco_url, max_retries=4):
+def fetch_redirect_location(tco_url, max_retries=2):
     # 連續打幾千次之後 t.co 偶爾會回 429/503——這種要重試，不能直接當成「這則沒有媒體」處理掉（第一次
     # 整批跑完就是吃了這個虧：跑了兩小時後開始被限流，舊版沒分辨就把之後全部誤判成沒有媒體）。
-    delay = 2
+    # retries 故意壓低（原本 4 次、最長等 30 秒）——單一則卡住不用死等到底，標成 retry_later 讓外層
+    # 快速繼續跑下一則，之後每次啟動都會自動回頭重試，整批的總處理速度反而比較快。
+    delay = 1
     for attempt in range(max_retries):
         try:
             r = requests.head(tco_url, allow_redirects=False, timeout=10)
@@ -176,9 +179,9 @@ def _run(args):
             progress[tweet_id] = "retry_later"
             stats["retry_later"] += 1
             consecutive_rate_limited += 1
-            if consecutive_rate_limited >= 3:
-                print(f"  [{i}/{len(todo)}] 連續被限流 {consecutive_rate_limited} 次，冷卻 60 秒再繼續…")
-                time.sleep(60)
+            if consecutive_rate_limited >= 6:
+                print(f"  [{i}/{len(todo)}] 連續被限流 {consecutive_rate_limited} 次，冷卻 20 秒再繼續…")
+                time.sleep(20)
                 consecutive_rate_limited = 0
             time.sleep(args.delay)
             continue
