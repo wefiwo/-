@@ -26,6 +26,7 @@ commands = [
         "options": [
             CHARACTER_OPTION,
             {"name": "類型", "description": "圖片或影片（預設圖片）", "type": 3, "required": False, "choices": TYPE_CHOICES},
+            {"name": "數量", "description": "一次要幾張（預設 1，最多 10）", "type": 4, "required": False, "min_value": 1, "max_value": 10},
         ],
     },
     {

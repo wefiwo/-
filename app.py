@@ -196,11 +196,19 @@ def url_hash(url):
     return hashlib.sha1(url.encode()).hexdigest()[:12]
 
 
-def find_entry_by_hash(character, short_hash):
-    for entry in load_collected().get(character, []):
-        if url_hash(entry["url"]) == short_hash:
-            return entry
-    return None
+def delete_entry_by_hash(character, short_hash):
+    # 🗑️ 按鈕點擊要在 Discord 的 3 秒回應時限內做完，不能像原本那樣「先讀一次找是哪一筆、再呼叫
+    # delete_entry 重新讀一次、寫一次」——一次點擊三趟 Upstash 太容易超時（尤其 Render 免費方案剛從
+    # 休眠喚醒的時候），改成一次讀、原地篩、一次寫，找跟刪合成同一趟。
+    data = load_collected()
+    bucket = data.get(character, [])
+    remaining = [e for e in bucket if url_hash(e["url"]) != short_hash]
+    if len(remaining) == len(bucket):
+        return None
+    deleted = next(e for e in bucket if url_hash(e["url"]) == short_hash)
+    data[character] = remaining
+    save_collected(data)
+    return deleted
 
 
 def build_stats_content():
@@ -253,6 +261,32 @@ def build_link_lines(url):
     if url.startswith("https://instagram.com/") or url.startswith("https://www.instagram.com/"):
         return f"[嵌圖用 勿點]({fix_embed_url(url)})\n{url}"
     return fix_embed_url(url)
+
+
+def _chunks(seq, size):
+    return [seq[i:i + size] for i in range(0, len(seq), size)]
+
+
+def build_pick_reply(character, media_type, entries):
+    # 一次抽超過一張才編號、才在按鈕上加數字標籤——單張的話原本就沒有「是哪一張」的疑問，維持原樣。
+    numbered = len(entries) > 1
+    lines = [(f"{i}. " if numbered else "") + build_link_lines(e["url"]) for i, e in enumerate(entries, 1)]
+    suffix = f"（{len(entries)} 張）" if numbered else ""
+    content = f"**{character}** 的{media_type}{suffix}\n" + "\n\n".join(lines)
+
+    # 🗑️ 按鈕代替反應——這個 bot 沒有常駐的 Gateway 連線，收不到 MESSAGE_REACTION_ADD 事件，
+    # 但按鈕點擊一樣是打 /interactions（type 3），跟其他互動同一條路，不用額外接 WebSocket。
+    # 一個 ActionRow 最多 5 顆按鈕，超過就分成第二排——最多抽 10 張，兩排就夠。
+    buttons = [
+        {
+            "type": 2, "style": 4, "emoji": {"name": "🗑️"},
+            **({"label": str(i)} if numbered else {}),
+            "custom_id": f"del:{character}:{url_hash(e['url'])}",
+        }
+        for i, e in enumerate(entries, 1)
+    ]
+    components = [{"type": 1, "components": row} for row in _chunks(buttons, 5)]
+    return content, components
 
 
 def post_announcement(characters, media_type, url):
@@ -312,8 +346,7 @@ def interactions():
         custom_id = body["data"]["custom_id"]
         if custom_id.startswith("del:"):
             _, character, short_hash = custom_id.split(":", 2)
-            entry = find_entry_by_hash(character, short_hash)
-            if not entry or not delete_entry(character, entry["url"]):
+            if not delete_entry_by_hash(character, short_hash):
                 return jsonify({"type": 7, "data": {"content": "找不到這筆收藏，可能已經刪除過了。", "components": []}})
             return jsonify({"type": 7, "data": {"content": f"🗑️ 已從「{character}」的收藏刪除這一則。", "components": []}})
         return ("", 400)
@@ -345,6 +378,7 @@ def interactions():
             return jsonify({"type": 4, "data": {"content": f"已從「{character}」的收藏刪除：{target_url}"}})
 
         media_type = opts.get("類型", "圖片")
+        count = max(1, min(int(opts.get("數量", 1)), 10))
         pool = [e for e in load_collected().get(character, []) if e.get("type") == type_from_label(media_type)]
         if not pool:
             return jsonify({
@@ -352,17 +386,10 @@ def interactions():
                 "data": {"content": f"「{character}」的{media_type}收藏是空的，去 X、FB、IG 上點幾個愛心吧。"},
             })
 
-        entry = random.choice(pool)
-        content = f"**{character}** 的{media_type}\n{build_link_lines(entry['url'])}"
-        # 🗑️ 按鈕代替反應——這個 bot 沒有常駐的 Gateway 連線，收不到 MESSAGE_REACTION_ADD 事件，
-        # 但按鈕點擊一樣是打 /interactions（type 3），跟其他互動同一條路，不用額外接 WebSocket。
-        components = [{
-            "type": 1,
-            "components": [{
-                "type": 2, "style": 4, "emoji": {"name": "🗑️"},
-                "custom_id": f"del:{character}:{url_hash(entry['url'])}",
-            }],
-        }]
+        picks = random.sample(pool, min(count, len(pool)))
+        content, components = build_pick_reply(character, media_type, picks)
+        if len(picks) < count:
+            content += f"\n（收藏只有 {len(picks)} 張，全部都在這了）"
         return jsonify({"type": 4, "data": {"content": content, "components": components}})
 
     return ("", 400)
