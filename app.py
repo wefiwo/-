@@ -7,6 +7,7 @@ X's anti-bot defenses, which this project won't do). Discord auto-embeds the lin
 download needed.
 """
 import base64
+import gzip
 import hashlib
 import json
 import os
@@ -645,6 +646,18 @@ def interactions():
     return ("", 400)
 
 
+def gzip_response(response):
+    # /export、/stats/html 這兩支回應動輒 1-2MB 起跳（collected.json 現在 17000+ 筆，只會繼續長），
+    # Render 免費方案每月頻寬只有 5GB——JSON/HTML 這種文字內容用 gzip 通常能壓到剩 1/5~1/10，白白省
+    # 下大部分頻寬。純 stdlib，不用裝套件；瀏覽器和 requests 都會自動解壓，呼叫端不用改。只在對方
+    # 表明支援 gzip（Accept-Encoding）才壓，避免遇到不支援的呼叫端收到亂碼。
+    if "gzip" in (request.headers.get("Accept-Encoding") or ""):
+        response.data = gzip.compress(response.get_data())
+        response.headers["Content-Encoding"] = "gzip"
+        response.headers["Content-Length"] = str(len(response.data))
+    return response
+
+
 @app.route("/stats/html", methods=["GET"])
 def stats_html():
     """常駐版排行榜——書籤這個網址就能隨時看最新排行，不用再另外生成一次性圖表。跟 /export 共用同一把
@@ -653,7 +666,7 @@ def stats_html():
     log 裡）——對一個純讀取、要有密鑰才看得到的個人排行榜頁面，這個取捨可接受。"""
     if request.args.get("key") != COLLECT_SECRET:
         abort(401)
-    return Response(build_stats_html(), mimetype="text/html")
+    return gzip_response(Response(build_stats_html(), mimetype="text/html"))
 
 
 @app.route("/hashtags", methods=["GET"])
@@ -677,7 +690,7 @@ def export_collected():
     X-Collect-Secret，沒有另外開一組憑證。"""
     if request.headers.get("X-Collect-Secret") != COLLECT_SECRET:
         abort(401)
-    return jsonify(load_collected())
+    return gzip_response(jsonify(load_collected()))
 
 
 @app.route("/admin/delete", methods=["POST"])

@@ -1,4 +1,6 @@
 """Self-check for /collect's hashtag matching + dedup logic (the one non-trivial branch)."""
+import gzip
+import json
 import os
 import random
 import tempfile
@@ -338,6 +340,21 @@ class TestCollect(unittest.TestCase):
         self.assertEqual(self.client.get("/stats/html").status_code, 401)
         self.assertEqual(self.client.get("/stats/html?key=nope").status_code, 401)
         self.assertEqual(self.client.get("/stats/html?key=test-secret").status_code, 200)
+
+    def test_export_and_stats_html_gzip_when_accepted(self):
+        # Render 免費方案的頻寬有限，這兩支回應本來就會隨收藏量一直長大——呼叫端表明支援 gzip 時
+        # 就該真的壓縮過再送，不能白白浪費頻寬。
+        app_module.save_collected({"秧秧": [{"url": "https://x.com/a/status/1", "author": "a", "type": "photo"}]})
+        r = self.client.get("/export", headers={"X-Collect-Secret": "test-secret", "Accept-Encoding": "gzip"})
+        self.assertEqual(r.headers.get("Content-Encoding"), "gzip")
+        self.assertEqual(json.loads(gzip.decompress(r.data)), app_module.load_collected())
+
+        r2 = self.client.get("/export", headers={"X-Collect-Secret": "test-secret"})  # 沒表明支援就不壓
+        self.assertIsNone(r2.headers.get("Content-Encoding"))
+
+        r3 = self.client.get("/stats/html?key=test-secret", headers={"Accept-Encoding": "gzip"})
+        self.assertEqual(r3.headers.get("Content-Encoding"), "gzip")
+        self.assertIn("秧秧", gzip.decompress(r3.data).decode("utf-8"))
 
     def test_admin_backup_requires_correct_secret(self):
         self.assertEqual(self.client.post("/admin/backup").status_code, 401)
