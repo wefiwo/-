@@ -260,6 +260,20 @@ class TestCollect(unittest.TestCase):
         r = self.client.get("/export", headers={"X-Collect-Secret": "test-secret"})
         self.assertEqual(r.get_json(), app_module.load_collected())
 
+    def test_admin_delete_requires_correct_secret(self):
+        r = self.client.post("/admin/delete", json={"character": "秧秧", "url": "https://x.com/a/status/1"})
+        self.assertEqual(r.status_code, 401)
+
+    def test_admin_delete_removes_entry(self):
+        app_module.save_collected({"秧秧": [{"url": "https://x.com/a/status/1", "author": "a", "type": "photo"}]})
+        r = self.client.post(
+            "/admin/delete",
+            json={"character": "秧秧", "url": "https://x.com/a/status/1"},
+            headers={"X-Collect-Secret": "test-secret"},
+        )
+        self.assertEqual(r.get_json(), {"deleted": True})
+        self.assertEqual(app_module.load_collected()["秧秧"], [])
+
     def test_collect_rejects_wrong_secret(self):
         r = self.client.post(
             "/collect",

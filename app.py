@@ -518,6 +518,18 @@ def export_collected():
     return jsonify(load_collected())
 
 
+@app.route("/admin/delete", methods=["POST"])
+def admin_delete():
+    """管理用途——跟 /抓圖刪除 做同一件事（delete_entry），只是給本機清理腳本直接打 HTTP 用，不用
+    透過 Discord signed interaction 一則一則點（例如批次清掉 hashtags.json 關鍵字衝突修好前，被
+    誤加進錯誤角色收藏的舊資料）。"""
+    if request.headers.get("X-Collect-Secret") != COLLECT_SECRET:
+        abort(401)
+    body = request.get_json(force=True, silent=True) or {}
+    character, url = body.get("character", ""), body.get("url", "")
+    return jsonify({"deleted": delete_entry(character, url)})
+
+
 @app.route("/collect", methods=["POST"])
 def collect():
     if request.headers.get("X-Collect-Secret") != COLLECT_SECRET:
