@@ -225,12 +225,17 @@ def pick_pool(entries, media_type_label, author_filter=None):
 
 
 def pick_random_character(media_type_label, author_filter=None):
-    # 每個角色機會均等，不是攤平全部貼文再抽（那樣鳴潮 6900+ 筆會壓過所有小收藏角色，幾乎每次都抽到
-    # 同一個，隨機就沒意義了）。只在真的有東西可抽的角色裡面選，選完照舊流程走，不用另外處理「抽到
-    # 沒有東西的角色」這種情況。
+    # 按「當下符合條件的張數」加權抽角色，不是每個角色機會均等——角色 A 抽中機率 = A 的張數 / 全部
+    # 張數，抽中角色後再從該角色裡均勻抽一張，兩段機率相乘後，結果等於每一張照片被抽到的機率完全相同
+    # （不用真的把所有角色的貼文攤平成一個大 list 也能拿到同樣的分佈）。權重每次都從當下 load_collected()
+    # 現算，角色收藏數變多變少會自動反映，不用另外維護/快取權重表。
     data = load_collected()
-    candidates = [name for name in HASHTAGS if pick_pool(data.get(name, []), media_type_label, author_filter)]
-    return random.choice(candidates) if candidates else None
+    pools = {name: pick_pool(data.get(name, []), media_type_label, author_filter) for name in HASHTAGS}
+    candidates = [(name, len(pool)) for name, pool in pools.items() if pool]
+    if not candidates:
+        return None
+    names, weights = zip(*candidates)
+    return random.choices(names, weights=weights, k=1)[0]
 
 
 def url_choices(character, query):

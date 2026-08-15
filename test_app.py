@@ -1,5 +1,6 @@
 """Self-check for /collect's hashtag matching + dedup logic (the one non-trivial branch)."""
 import os
+import random
 import tempfile
 import unittest
 from datetime import datetime
@@ -305,6 +306,18 @@ class TestCollect(unittest.TestCase):
         })
         for _ in range(20):
             self.assertEqual(app_module.pick_random_character("圖片"), "長離")
+
+    def test_pick_random_character_weights_by_current_matching_count(self):
+        # 秧秧 3 張、長離 1 張——抽角色的權重要照這個比例給，不是均等的 1:1。用 patch 直接看
+        # random.choices 被叫的時候權重帶什麼，不用跑統計次數賭機率（會不穩定）。
+        app_module.save_collected({
+            "秧秧": [{"url": f"https://x.com/a/status/{i}", "author": "a", "type": "photo"} for i in range(3)],
+            "長離": [{"url": "https://x.com/b/status/1", "author": "b", "type": "photo"}],
+        })
+        with patch("random.choices", wraps=random.choices) as mock_choices:
+            app_module.pick_random_character("圖片")
+        names, weights = mock_choices.call_args[0][0], mock_choices.call_args[1]["weights"]
+        self.assertEqual(dict(zip(names, weights)), {"秧秧": 3, "長離": 1})
 
     def test_pick_random_character_returns_none_when_nothing_matches(self):
         app_module.save_collected({})
