@@ -258,12 +258,16 @@ def fix_embed_url(url):
     return url
 
 
+def _is_instagram(url):
+    return url.startswith("https://instagram.com/") or url.startswith("https://www.instagram.com/")
+
+
 def build_link_lines(url):
     # kkinstagram.com gives Discord's crawler the real media for a proper inline embed, but a
     # human clicking the same link gets bounced to an unrelated third-party site — so for IG,
     # hide that link behind neutral link text and put the real instagram.com link on its own
     # line underneath for people to actually click.
-    if url.startswith("https://instagram.com/") or url.startswith("https://www.instagram.com/"):
+    if _is_instagram(url):
         return f"[嵌圖用 勿點]({fix_embed_url(url)})\n{url}"
     return fix_embed_url(url)
 
@@ -287,14 +291,28 @@ def build_pick_reply(character, media_type, entries):
         for i, e in enumerate(entries, 1)
     ]
 
-    # Discord 一則訊息只會自動幫前 5 個連結產生預覽圖，超過的連結雖然還是點得開，但不會有圖——數量
-    # 選到 10 張時，超過 5 的部分（連同各自的刪除按鈕）拆成後續的 webhook follow-up message，才會
-    # 每張都有預覽。follow-up 沒有 3 秒回應時限，交給呼叫端非同步送。一個 ActionRow 最多 5 顆按鈕，
-    # 跟這裡的分組大小（5）天生對齊，不用再另外分列。
-    messages = [
-        {"content": "\n\n".join(lc), "components": [{"type": 1, "components": bc}]}
-        for lc, bc in zip(_chunks(lines, 5), _chunks(buttons, 5))
-    ]
+    # Discord 一則訊息只會自動幫前 5 個「連結」產生預覽圖，不是前 5「張」——IG 那則貼文的
+    # build_link_lines() 藏了兩個連結（給爬蟲嵌圖用的 kkinstagram + 給人點的真實 instagram.com），
+    # 佔了 2 個額度，會把原本排得進同一則的下一張擠出預覽範圍外。所以分組要照每篇貼文實際佔用的
+    # 連結數（IG 算 2、其他算 1）湊到 5 個額度就切一則，不能單純每 5 張切一刀。超過的部分連同各自的
+    # 刪除按鈕拆成後續的 webhook follow-up message（沒有 3 秒回應時限，交給呼叫端非同步送）。
+    group_sizes, count, budget_used = [], 0, 0
+    for e in entries:
+        cost = 2 if _is_instagram(e["url"]) else 1
+        if count and budget_used + cost > 5:
+            group_sizes.append(count)
+            count, budget_used = 0, 0
+        count += 1
+        budget_used += cost
+    group_sizes.append(count)
+
+    messages, i = [], 0
+    for size in group_sizes:
+        messages.append({
+            "content": "\n\n".join(lines[i:i + size]),
+            "components": [{"type": 1, "components": buttons[i:i + size]}],
+        })
+        i += size
     messages[0]["content"] = header + messages[0]["content"]
     return messages[0]["content"], messages[0]["components"], messages[1:]
 
@@ -328,10 +346,6 @@ def remove_pick_from_message(message, character, clicked_custom_id):
     if not lines:
         return f"🗑️ 已從「{character}」的收藏刪除這一則。", []
     return header + "\n\n".join(lines), [{"type": 1, "components": kept_buttons}]
-
-
-def _chunks(seq, size):
-    return [seq[i:i + size] for i in range(0, len(seq), size)]
 
 
 def send_followups(token, messages):

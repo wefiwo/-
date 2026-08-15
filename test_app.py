@@ -152,6 +152,23 @@ class TestCollect(unittest.TestCase):
         self.assertIn("7. ", followups[0]["content"])
         self.assertEqual(len(followups[0]["components"][0]["components"]), 2)
 
+    def test_build_pick_reply_counts_instagram_as_two_links_when_grouping(self):
+        # build_link_lines() 幫 IG 貼文塞了兩個連結（嵌圖用的 kkinstagram + 給人點的 instagram.com），
+        # 佔掉 2 個預覽額度——5 張裡混一張 IG，總額度變 6，超過 5，最後一張該被擠到下一則訊息，不能
+        # 照樣切在同一則（不然真實情況裡最後一張就會沒有預覽圖，這正是回報的那個問題）。
+        entries = [
+            {"url": "https://x.com/a/status/1", "author": "a", "type": "photo"},
+            {"url": "https://x.com/a/status/2", "author": "a", "type": "photo"},
+            {"url": "https://instagram.com/p/abc/", "author": "b", "type": "photo"},
+            {"url": "https://x.com/a/status/3", "author": "a", "type": "photo"},
+            {"url": "https://x.com/a/status/4", "author": "a", "type": "photo"},
+        ]
+        content, components, followups = app_module.build_pick_reply("秧秧", "圖片", entries)
+        self.assertIn("4. ", content)
+        self.assertNotIn("5. ", content)  # 被 IG 佔用的額度擠出這一則
+        self.assertEqual(len(followups), 1)
+        self.assertIn("5. ", followups[0]["content"])
+
     def test_build_stats_content_counts_across_characters(self):
         app_module.save_collected({
             "秧秧": [
