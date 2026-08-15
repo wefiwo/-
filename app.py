@@ -299,6 +299,37 @@ def build_pick_reply(character, media_type, entries):
     return messages[0]["content"], messages[0]["components"], messages[1:]
 
 
+def remove_pick_from_message(message, character, clicked_custom_id):
+    # 點垃圾桶只該讓「這一張」從畫面上消失，不是整則訊息（原本 type 7 UPDATE_MESSAGE 直接整則換成
+    # 確認文字，會連同一則裡其他還沒刪的張一起消失）。這裡改成用該則訊息現有的按鈕列表（扣掉被點的
+    # 那顆）反查目前收藏裡還在的網址，重新組出只少一張的內容——用按鈕本身當「這則訊息裡有哪幾張」的
+    # 真相來源，不用去解析舊的文字內容。
+    # ponytail: 剩下的張保留原本的編號（不會重排成連續 1,2,3...），省下同步改 custom_id 對應關係的
+    # 麻煩——編號留缺口不影響能不能點開連結，只是好看度打折。
+    header = ""
+    if message.get("content", "").startswith("**"):
+        first_line, _, _ = message["content"].partition("\n")
+        header = first_line + "\n"
+
+    by_hash = {url_hash(e["url"]): e["url"] for e in load_collected().get(character, [])}
+    kept_buttons, lines = [], []
+    for row in message.get("components", []):
+        for button in row["components"]:
+            if button["custom_id"] == clicked_custom_id:
+                continue
+            _, _, short_hash = button["custom_id"].split(":", 2)
+            url = by_hash.get(short_hash)
+            if url is None:  # already deleted through some other path — drop it too
+                continue
+            kept_buttons.append(button)
+            prefix = f"{button['label']}. " if "label" in button else ""
+            lines.append(prefix + build_link_lines(url))
+
+    if not lines:
+        return f"🗑️ 已從「{character}」的收藏刪除這一則。", []
+    return header + "\n\n".join(lines), [{"type": 1, "components": kept_buttons}]
+
+
 def _chunks(seq, size):
     return [seq[i:i + size] for i in range(0, len(seq), size)]
 
@@ -372,7 +403,8 @@ def interactions():
             _, character, short_hash = custom_id.split(":", 2)
             if not delete_entry_by_hash(character, short_hash):
                 return jsonify({"type": 7, "data": {"content": "找不到這筆收藏，可能已經刪除過了。", "components": []}})
-            return jsonify({"type": 7, "data": {"content": f"🗑️ 已從「{character}」的收藏刪除這一則。", "components": []}})
+            content, components = remove_pick_from_message(body["message"], character, custom_id)
+            return jsonify({"type": 7, "data": {"content": content, "components": components}})
         return ("", 400)
 
     if itype == 2:  # slash command invoked

@@ -87,6 +87,36 @@ class TestCollect(unittest.TestCase):
         self.assertIsNone(app_module.delete_entry_by_hash("秧秧", "deadbeef0000"))
         self.assertEqual(len(app_module.load_collected()["秧秧"]), 1)
 
+    def test_remove_pick_from_message_keeps_the_other_picks(self):
+        # 5 張一起抽出，刪掉其中一張（entry 2）之後，訊息應該只少那一張的連結跟按鈕，其餘 4 張要還在。
+        entries = [{"url": f"https://x.com/a/status/{i}", "author": "a", "type": "photo"} for i in range(1, 6)]
+        app_module.save_collected({"秧秧": entries})
+        content, components, _ = app_module.build_pick_reply("秧秧", "圖片", entries)
+        message = {"content": content, "components": components}
+
+        clicked_id = components[0]["components"][1]["custom_id"]  # entry 2 的按鈕
+        app_module.delete_entry_by_hash("秧秧", clicked_id.split(":", 2)[2])
+
+        new_content, new_components = app_module.remove_pick_from_message(message, "秧秧", clicked_id)
+        self.assertIn("**秧秧**", new_content)  # header 保留
+        self.assertNotIn("status/2", new_content)
+        self.assertIn("status/1", new_content)
+        self.assertIn("status/5", new_content)
+        self.assertEqual(len(new_components[0]["components"]), 4)
+
+    def test_remove_pick_from_message_clears_when_it_was_the_last_one(self):
+        entries = [{"url": "https://x.com/a/status/1", "author": "a", "type": "photo"}]
+        app_module.save_collected({"秧秧": entries})
+        content, components, _ = app_module.build_pick_reply("秧秧", "圖片", entries)
+        message = {"content": content, "components": components}
+
+        clicked_id = components[0]["components"][0]["custom_id"]
+        app_module.delete_entry_by_hash("秧秧", clicked_id.split(":", 2)[2])
+
+        new_content, new_components = app_module.remove_pick_from_message(message, "秧秧", clicked_id)
+        self.assertIn("已從", new_content)
+        self.assertEqual(new_components, [])
+
     def test_build_pick_reply_single_entry_has_no_numbering(self):
         entries = [{"url": "https://x.com/a/status/1", "author": "a", "type": "photo"}]
         content, components, followups = app_module.build_pick_reply("秧秧", "圖片", entries)
