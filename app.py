@@ -175,6 +175,10 @@ def delete_entry(character, url):
     target = fix_embed_url(url)
     remaining = [e for e in bucket if fix_embed_url(e["url"]) != target]
     if len(remaining) == len(bucket):
+        # 曾經回報過「明明看得到卻刪不掉」——目前看不出程式邏輯哪裡會漏比對，先加這行 log，下次再發生
+        # 就能從 Render Logs 直接看到當下真正傳進來的網址（跟轉過 fix_embed_url 後的樣子）長怎樣，
+        # 而不是用猜的。bucket 大的角色（鳴潮那種幾千筆）不整包印出來，只印數量。
+        print(f"[抓圖刪除] 找不到符合的網址：character={character!r} url={url!r} target={target!r} bucket_size={len(bucket)}", flush=True)
         return False
     data[character] = remaining
     save_collected(data)
