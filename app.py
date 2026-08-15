@@ -508,6 +508,16 @@ def get_autocomplete():
     return jsonify(autocomplete_matches(request.args.get("q", "").strip()))
 
 
+@app.route("/export", methods=["GET"])
+def export_collected():
+    """管理用途——匯出整包 collected.json 現況，供本機稽核/清理腳本讀取（例如抓誤配對的舊資料、
+    掃死連結），不然本機沒有 Upstash 憑證、讀不到正式站上實際存了什麼。跟 /collect 共用同一把
+    X-Collect-Secret，沒有另外開一組憑證。"""
+    if request.headers.get("X-Collect-Secret") != COLLECT_SECRET:
+        abort(401)
+    return jsonify(load_collected())
+
+
 @app.route("/collect", methods=["POST"])
 def collect():
     if request.headers.get("X-Collect-Secret") != COLLECT_SECRET:

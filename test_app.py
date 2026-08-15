@@ -251,6 +251,15 @@ class TestCollect(unittest.TestCase):
         self.assertNotIn("https://x.com/a/status/1", content)
         self.assertIn("https://x.com/b/status/2", content)
 
+    def test_export_requires_correct_secret(self):
+        self.assertEqual(self.client.get("/export").status_code, 401)
+        self.assertEqual(self.client.get("/export", headers={"X-Collect-Secret": "nope"}).status_code, 401)
+
+    def test_export_returns_current_collected_data(self):
+        app_module.save_collected({"秧秧": [{"url": "https://x.com/a/status/1", "author": "a", "type": "photo"}]})
+        r = self.client.get("/export", headers={"X-Collect-Secret": "test-secret"})
+        self.assertEqual(r.get_json(), app_module.load_collected())
+
     def test_collect_rejects_wrong_secret(self):
         r = self.client.post(
             "/collect",
