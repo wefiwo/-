@@ -6,17 +6,19 @@ this replaces both the official X API (search needs a paid plan) and scraping (m
 X's anti-bot defenses, which this project won't do). Discord auto-embeds the link itself, no
 download needed.
 """
+import base64
 import hashlib
 import json
 import os
 import random
 import re
 import threading
+from datetime import datetime, timezone
 from pathlib import Path
 
 import requests
 from dotenv import load_dotenv
-from flask import Flask, abort, jsonify, request
+from flask import Flask, Response, abort, jsonify, request
 from nacl.exceptions import BadSignatureError
 from nacl.signing import VerifyKey
 from pypinyin import Style, load_phrases_dict, lazy_pinyin
@@ -68,6 +70,13 @@ COLLECTED_PATH = Path(__file__).parent / "collected.json"
 # local JSON file when these aren't set — fine for local dev, not for a free-tier deploy.
 UPSTASH_URL = os.environ.get("UPSTASH_REDIS_REST_URL", "").rstrip("/")
 UPSTASH_TOKEN = os.environ.get("UPSTASH_REDIS_REST_TOKEN", "")
+
+# Optional: 把 /export 的內容定期快照進另一個 GitHub repo，當 Upstash 那顆單一 key 的備援（弄丟就是
+# 17000+ 筆全沒了，Upstash 免費方案沒有自動備份）。三個都要設才會生效，缺一個 /admin/backup 就回錯誤。
+# GITHUB_BACKUP_TOKEN 需要對目標 repo 有 contents:write 權限的 PAT；GITHUB_BACKUP_REPO 是 "owner/repo"。
+GITHUB_BACKUP_TOKEN = os.environ.get("GITHUB_BACKUP_TOKEN", "")
+GITHUB_BACKUP_REPO = os.environ.get("GITHUB_BACKUP_REPO", "")
+GITHUB_BACKUP_PATH = os.environ.get("GITHUB_BACKUP_PATH", "collected_backup.json")
 
 with open(HASHTAGS_PATH, encoding="utf-8") as f:
     HASHTAGS = {k: (v if isinstance(v, list) else [v]) for k, v in json.load(f).items() if not k.startswith("_")}
@@ -203,6 +212,14 @@ def type_from_label(media_type_label):
     return "video" if media_type_label == "影片" else "photo"
 
 
+def pick_pool(entries, media_type_label, author_filter=None):
+    pool = [e for e in entries if e.get("type") == type_from_label(media_type_label)]
+    if author_filter and author_filter.strip():
+        needle = author_filter.strip().lower()
+        pool = [e for e in pool if needle in (e.get("author") or "").lower()]
+    return pool
+
+
 def url_choices(character, query):
     # /抓圖刪除 的「網址」欄位自動完成——照選好的角色列出收藏的貼文，用網址或作者子字串篩選，不用先
     # 跑 /抓圖清單 複製貼上。Discord 的 choice name/value 都限 100 字，URL 理論上不會超過但保險截斷。
@@ -231,6 +248,8 @@ def build_list_content(character, media_type_label):
         return header
 
     limit = 15
+    # 收藏是依加入順序 append 的，所以整批 reverse 就是「最新加入的在前」——不用另外比對 added_at。
+    shown = list(reversed(shown))
     lines = [
         f"{i}. {media_emoji(e['type'])} [{e.get('author') or '?'}]({e['url']})"
         for i, e in enumerate(shown[:limit], 1)
@@ -238,6 +257,71 @@ def build_list_content(character, media_type_label):
     if len(shown) > limit:
         lines.append(f"（還有 {len(shown) - limit} 筆，只顯示前 {limit} 筆）")
     return header + "\n" + "\n".join(lines)
+
+
+# 常駐排行榜頁面（/stats/html）用的極簡樣板——跟一次性丟給 Claude 產生的圖表版型相近，但這份是每次
+# request 即時從 Redis 現況算的，書籤起來隨時看最新排行不用再叫我重跑一次。只用 prefers-color-scheme
+# 跟隨系統深色模式，沒有另外做手動切換開關，個人工具用不到。
+STATS_HTML_TEMPLATE = """<!doctype html>
+<html><head><meta charset="utf-8"><title>抓圖角色收藏排行</title>
+<style>
+  :root { color-scheme: light dark; }
+  body {
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    background: #f9f9f7; color: #0b0b0b; padding: 24px; margin: 0;
+  }
+  @media (prefers-color-scheme: dark) { body { background: #0d0d0d; color: #fff; } }
+  .card { max-width: 860px; margin: 0 auto; }
+  h1 { font-size: 18px; margin: 0 0 4px; }
+  .subtitle { font-size: 13px; color: #767671; margin: 0 0 16px; }
+  #search { width: 100%; box-sizing: border-box; font: inherit; font-size: 14px; padding: 8px 12px;
+    border-radius: 8px; border: 1px solid rgba(128,128,128,.3); margin-bottom: 12px; background: transparent; color: inherit; }
+  .row { display: flex; align-items: center; gap: 8px; padding: 3px 0; }
+  .row.hidden { display: none; }
+  .rank { flex: 0 0 30px; font-size: 12px; color: #898781; text-align: right; }
+  .name { flex: 0 0 150px; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .bar-track { flex: 1; height: 16px; }
+  .bar { height: 16px; min-width: 3px; background: #2a78d6; border-radius: 0 4px 4px 0; }
+  @media (prefers-color-scheme: dark) { .bar { background: #3987e5; } }
+  .value { flex: 0 0 52px; font-size: 12px; color: #767671; text-align: right; }
+</style></head>
+<body><div class="card">
+  <h1>📊 全角色收藏排行</h1>
+  <p class="subtitle">__SUBTITLE__</p>
+  <input id="search" type="text" placeholder="搜尋角色名稱…" autocomplete="off">
+  <div id="list"></div>
+</div>
+<script>
+  const DATA = __DATA_JSON__;
+  const max = Math.max(...DATA.map(d => d.count), 1);
+  const list = document.getElementById('list');
+  const rows = DATA.map((d, i) => {
+    const row = document.createElement('div');
+    row.className = 'row';
+    row.dataset.name = d.name.toLowerCase();
+    row.innerHTML = `<span class="rank">${i + 1}</span><span class="name" title="${d.name}">${d.name}</span>` +
+      `<span class="bar-track"><span class="bar" style="width:${(d.count / max * 100).toFixed(2)}%"></span></span>` +
+      `<span class="value">${d.count.toLocaleString()}</span>`;
+    list.appendChild(row);
+    return row;
+  });
+  document.getElementById('search').addEventListener('input', (e) => {
+    const q = e.target.value.trim().toLowerCase();
+    rows.forEach(row => row.classList.toggle('hidden', q && !row.dataset.name.includes(q)));
+  });
+</script></body></html>"""
+
+
+def build_stats_html():
+    # .format()/f-string 都會跟樣板裡一堆 CSS/JS 的 { } 衝突，用獨一無二的 token 直接 replace 省事，
+    # 不用把整份樣板的大括號都跳脫成 {{ }}。
+    data = load_collected()
+    counts = {name: len(data.get(name, [])) for name in HASHTAGS}
+    ranked = sorted(counts.items(), key=lambda kv: kv[1], reverse=True)
+    with_entries = sum(1 for _, n in ranked if n)
+    subtitle = f"共 {len(HASHTAGS)} 個角色，{with_entries} 個有收藏、{len(HASHTAGS) - with_entries} 個還是空的"
+    data_json = json.dumps([{"name": n, "count": c} for n, c in ranked], ensure_ascii=False)
+    return STATS_HTML_TEMPLATE.replace("__SUBTITLE__", subtitle).replace("__DATA_JSON__", data_json)
 
 
 def build_stats_content(character=None):
@@ -491,12 +575,15 @@ def interactions():
 
         media_type = opts.get("類型", "圖片")
         count = max(1, min(int(opts.get("數量", 1)), 10))
-        pool = [e for e in load_collected().get(character, []) if e.get("type") == type_from_label(media_type)]
+        author_filter = opts.get("作者")
+        pool = pick_pool(load_collected().get(character, []), media_type, author_filter)
         if not pool:
-            return jsonify({
-                "type": 4,
-                "data": {"content": f"「{character}」的{media_type}收藏是空的，去 X、FB、IG 上點幾個愛心吧。"},
-            })
+            empty_msg = (
+                f"「{character}」的{media_type}收藏裡沒有作者符合「{author_filter}」的。"
+                if author_filter else
+                f"「{character}」的{media_type}收藏是空的，去 X、FB、IG 上點幾個愛心吧。"
+            )
+            return jsonify({"type": 4, "data": {"content": empty_msg}})
 
         picks = random.sample(pool, min(count, len(pool)))
         content, components, followups = build_pick_reply(character, media_type, picks)
@@ -507,6 +594,17 @@ def interactions():
         return jsonify({"type": 4, "data": {"content": content, "components": components}})
 
     return ("", 400)
+
+
+@app.route("/stats/html", methods=["GET"])
+def stats_html():
+    """常駐版排行榜——書籤這個網址就能隨時看最新排行，不用再另外生成一次性圖表。跟 /export 共用同一把
+    密鑰，但這頁是給瀏覽器直接開的書籤，瀏覽器導覽沒辦法帶自訂 header，所以密鑰改用 query string
+    （?key=...），跟 X-Collect-Secret header 那套不同傳法，安全性略低（會留在瀏覽器歷史記錄/伺服器
+    log 裡）——對一個純讀取、要有密鑰才看得到的個人排行榜頁面，這個取捨可接受。"""
+    if request.args.get("key") != COLLECT_SECRET:
+        abort(401)
+    return Response(build_stats_html(), mimetype="text/html")
 
 
 @app.route("/hashtags", methods=["GET"])
@@ -543,6 +641,43 @@ def admin_delete():
     body = request.get_json(force=True, silent=True) or {}
     character, url = body.get("character", ""), body.get("url", "")
     return jsonify({"deleted": delete_entry(character, url)})
+
+
+def backup_to_github():
+    """把 load_collected() 現況推一份快照到備援 repo 的固定路徑（每次蓋掉同一個檔案，不另外做輪替/
+    日期命名——GitHub commit history 本身就是版本紀錄，需要回溯哪一天的資料就直接翻 git log，這是
+    ladder 第 4 層「平台原生功能」的偷懶：省了自己維護保留幾份、多久清一次的邏輯。"""
+    if not (GITHUB_BACKUP_TOKEN and GITHUB_BACKUP_REPO):
+        raise RuntimeError("GITHUB_BACKUP_TOKEN / GITHUB_BACKUP_REPO 沒設定")
+    api_url = f"https://api.github.com/repos/{GITHUB_BACKUP_REPO}/contents/{GITHUB_BACKUP_PATH}"
+    headers = {"Authorization": f"Bearer {GITHUB_BACKUP_TOKEN}", "Accept": "application/vnd.github+json"}
+    content_b64 = base64.b64encode(
+        json.dumps(load_collected(), ensure_ascii=False, indent=2).encode("utf-8")
+    ).decode("ascii")
+
+    existing = requests.get(api_url, headers=headers, timeout=15)
+    sha = existing.json().get("sha") if existing.status_code == 200 else None
+
+    payload = {"message": f"backup: {datetime.now(timezone.utc).isoformat()}", "content": content_b64}
+    if sha:
+        payload["sha"] = sha  # GitHub Contents API 沒帶對現有檔案的 sha 會拒絕覆寫，新檔案則不用帶
+    resp = requests.put(api_url, headers=headers, json=payload, timeout=15)
+    resp.raise_for_status()
+    return resp.json()["commit"]["sha"]
+
+
+@app.route("/admin/backup", methods=["POST"])
+def admin_backup():
+    """管理用途——把現況快照推到備援 GitHub repo。給外部排程服務（例如 cron-job.org）定期打，不是給
+    互動流程用；失敗要讓呼叫端看到（跟 post_announcement 那種「順便做，失敗不擋主流程」不一樣，這支本
+    身就是備份，失敗必須被發現，不能吞掉）。"""
+    if request.headers.get("X-Collect-Secret") != COLLECT_SECRET:
+        abort(401)
+    try:
+        commit_sha = backup_to_github()
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+    return jsonify({"ok": True, "commit": commit_sha})
 
 
 @app.route("/collect", methods=["POST"])
@@ -601,7 +736,10 @@ def collect():
     for character in matched:
         bucket = data.setdefault(character, [])
         if not any(e["url"] == url for e in bucket):
-            bucket.append({"url": url, "author": author, "type": media_type})
+            bucket.append({
+                "url": url, "author": author, "type": media_type,
+                "added_at": datetime.now(timezone.utc).isoformat(),
+            })
             added.append(character)
     save_collected(data)
 

@@ -2,6 +2,7 @@
 import os
 import tempfile
 import unittest
+from datetime import datetime
 from pathlib import Path
 from unittest.mock import patch
 
@@ -56,6 +57,18 @@ class TestCollect(unittest.TestCase):
         self.assertEqual(r2.get_json()["added_to"], [])
 
         self.assertEqual(len(app_module.load_collected()["秧秧"]), 1)
+
+    def test_collect_records_added_at_timestamp(self):
+        payload = {
+            "url": "https://x.com/artist/status/1",
+            "author": "artist",
+            "type": "photo",
+            "text": "look #YangyangXuanling fanart",
+        }
+        self.client.post("/collect", json=payload, headers={"X-Collect-Secret": "test-secret"})
+        entry = app_module.load_collected()["秧秧"][0]
+        self.assertIn("added_at", entry)
+        datetime.fromisoformat(entry["added_at"])  # 格式要能被解析回去，壞掉這裡就會噴
 
     def test_matched_characters_prefers_the_more_specific_alt_form_over_the_base_name(self):
         # 「秧秧・玄翎」的關鍵字天生就包含「秧秧」——貼文同時命中兩者時，只該算進比較明確的
@@ -262,6 +275,52 @@ class TestCollect(unittest.TestCase):
         content = app_module.build_list_content("秧秧", "影片")
         self.assertNotIn("https://x.com/a/status/1", content)
         self.assertIn("https://x.com/b/status/2", content)
+
+    def test_build_list_content_shows_newest_first(self):
+        # 收藏是依加入順序 append 的，/抓圖清單 該把最後加的排最前面，不然大量收藏的角色永遠只看得到
+        # 最舊的 15 筆，看不到「最近新增了什麼」。
+        app_module.save_collected({"秧秧": [
+            {"url": "https://x.com/a/status/1", "author": "a", "type": "photo"},
+            {"url": "https://x.com/b/status/2", "author": "b", "type": "photo"},
+        ]})
+        content = app_module.build_list_content("秧秧", None)
+        self.assertLess(content.index("status/2"), content.index("status/1"))
+
+    def test_pick_pool_filters_by_media_type_and_author(self):
+        entries = [
+            {"url": "https://x.com/a/status/1", "author": "artistA", "type": "photo"},
+            {"url": "https://x.com/b/status/2", "author": "artistB", "type": "photo"},
+            {"url": "https://x.com/a/status/3", "author": "artistA", "type": "video"},
+        ]
+        self.assertEqual(len(app_module.pick_pool(entries, "圖片", None)), 2)
+        photo_by_a = app_module.pick_pool(entries, "圖片", "artista")  # 大小寫不敏感、子字串就算
+        self.assertEqual([e["url"] for e in photo_by_a], ["https://x.com/a/status/1"])
+        self.assertEqual(app_module.pick_pool(entries, "圖片", "nobody"), [])
+
+    def test_build_stats_html_lists_all_characters_ranked(self):
+        app_module.save_collected({
+            "秧秧": [{"url": "https://x.com/a/status/1", "author": "a", "type": "photo"}],
+            "長離": [{"url": f"https://x.com/b/status/{i}", "author": "b", "type": "photo"} for i in range(3)],
+        })
+        html = app_module.build_stats_html()
+        self.assertIn("長離", html)
+        self.assertIn("秧秧", html)
+        self.assertIn("金城", html)  # 沒收藏的角色也該列出來（0 筆），不是只列有收藏的
+        self.assertLess(html.index('"長離"'), html.index('"秧秧"'))  # 3 筆排在 1 筆前面
+
+    def test_stats_html_requires_correct_key(self):
+        self.assertEqual(self.client.get("/stats/html").status_code, 401)
+        self.assertEqual(self.client.get("/stats/html?key=nope").status_code, 401)
+        self.assertEqual(self.client.get("/stats/html?key=test-secret").status_code, 200)
+
+    def test_admin_backup_requires_correct_secret(self):
+        self.assertEqual(self.client.post("/admin/backup").status_code, 401)
+
+    def test_admin_backup_fails_cleanly_without_github_config(self):
+        # 測試環境沒設 GITHUB_BACKUP_TOKEN/_REPO——這支要能回報失敗，不能吞掉或噴 500 隱藏原因。
+        r = self.client.post("/admin/backup", headers={"X-Collect-Secret": "test-secret"})
+        self.assertEqual(r.status_code, 500)
+        self.assertFalse(r.get_json()["ok"])
 
     def test_export_requires_correct_secret(self):
         self.assertEqual(self.client.get("/export").status_code, 401)
