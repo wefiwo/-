@@ -224,6 +224,15 @@ def pick_pool(entries, media_type_label, author_filter=None):
     return pool
 
 
+def pick_random_character(media_type_label, author_filter=None):
+    # 每個角色機會均等，不是攤平全部貼文再抽（那樣鳴潮 6900+ 筆會壓過所有小收藏角色，幾乎每次都抽到
+    # 同一個，隨機就沒意義了）。只在真的有東西可抽的角色裡面選，選完照舊流程走，不用另外處理「抽到
+    # 沒有東西的角色」這種情況。
+    data = load_collected()
+    candidates = [name for name in HASHTAGS if pick_pool(data.get(name, []), media_type_label, author_filter)]
+    return random.choice(candidates) if candidates else None
+
+
 def url_choices(character, query):
     # /抓圖刪除 的「網址」欄位自動完成——照選好的角色列出收藏的貼文，用網址或作者子字串篩選，不用先
     # 跑 /抓圖清單 複製貼上。Discord 的 choice name/value 都限 100 字，URL 理論上不會超過但保險截斷。
@@ -558,6 +567,45 @@ def interactions():
                 })
             return jsonify({"type": 4, "data": {"content": build_stats_content(stat_character or None)}})
 
+        if command_name == "抓圖":
+            # 唯一一個「角色」選填的指令——留空就從有符合條件收藏的角色裡隨機選一個，跟其他指令共用
+            # 下面「角色必須是已知 hashtags.json key」那道關卡走不通，所以跟 /抓圖統計 一樣提前處理。
+            media_type = opts.get("類型", "圖片")
+            count = max(1, min(int(opts.get("數量", 1)), 10))
+            author_filter = opts.get("作者")
+            character = opts.get("角色", "").strip()
+            if character and character not in HASHTAGS:
+                return jsonify({
+                    "type": 4,
+                    "data": {"content": f"找不到「{character}」的 Hashtag，請先在 hashtags.json 新增。", "flags": 64},
+                })
+            if not character:
+                character = pick_random_character(media_type, author_filter)
+                if character is None:
+                    no_match_msg = (
+                        f"目前沒有任何角色的{media_type}收藏裡有作者符合「{author_filter}」的。"
+                        if author_filter else
+                        f"目前還沒有任何角色的{media_type}收藏，去 X、FB、IG 上點幾個愛心吧。"
+                    )
+                    return jsonify({"type": 4, "data": {"content": no_match_msg}})
+
+            pool = pick_pool(load_collected().get(character, []), media_type, author_filter)
+            if not pool:
+                empty_msg = (
+                    f"「{character}」的{media_type}收藏裡沒有作者符合「{author_filter}」的。"
+                    if author_filter else
+                    f"「{character}」的{media_type}收藏是空的，去 X、FB、IG 上點幾個愛心吧。"
+                )
+                return jsonify({"type": 4, "data": {"content": empty_msg}})
+
+            picks = random.sample(pool, min(count, len(pool)))
+            content, components, followups = build_pick_reply(character, media_type, picks)
+            if len(picks) < count:
+                content += f"\n（收藏只有 {len(picks)} 張，全部都在這了）"
+            if followups:
+                threading.Thread(target=send_followups, args=(body["token"], followups), daemon=True).start()
+            return jsonify({"type": 4, "data": {"content": content, "components": components}})
+
         character = opts.get("角色", "")
         if character not in HASHTAGS:
             return jsonify({
@@ -588,26 +636,6 @@ def interactions():
                     },
                 })
             return jsonify({"type": 4, "data": {"content": f"已從「{character}」的收藏刪除：{target_url}"}})
-
-        media_type = opts.get("類型", "圖片")
-        count = max(1, min(int(opts.get("數量", 1)), 10))
-        author_filter = opts.get("作者")
-        pool = pick_pool(load_collected().get(character, []), media_type, author_filter)
-        if not pool:
-            empty_msg = (
-                f"「{character}」的{media_type}收藏裡沒有作者符合「{author_filter}」的。"
-                if author_filter else
-                f"「{character}」的{media_type}收藏是空的，去 X、FB、IG 上點幾個愛心吧。"
-            )
-            return jsonify({"type": 4, "data": {"content": empty_msg}})
-
-        picks = random.sample(pool, min(count, len(pool)))
-        content, components, followups = build_pick_reply(character, media_type, picks)
-        if len(picks) < count:
-            content += f"\n（收藏只有 {len(picks)} 張，全部都在這了）"
-        if followups:
-            threading.Thread(target=send_followups, args=(body["token"], followups), daemon=True).start()
-        return jsonify({"type": 4, "data": {"content": content, "components": components}})
 
     return ("", 400)
 

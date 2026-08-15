@@ -16,6 +16,7 @@ print("Application ID:", app_id)
 
 CHARACTER_OPTION = {"name": "角色", "description": "角色名稱", "type": 3, "required": True, "autocomplete": True}
 CHARACTER_OPTION_OPTIONAL = {**CHARACTER_OPTION, "required": False, "description": "只看這個角色的收藏數與排名（不填則顯示整體統計）"}
+CHARACTER_OPTION_RANDOM = {**CHARACTER_OPTION, "required": False, "description": "角色名稱（留空則隨機挑一位角色）"}
 TYPE_CHOICES = [{"name": "圖片", "value": "圖片"}, {"name": "影片", "value": "影片"}]
 COMMON = {"integration_types": [1], "contexts": [0, 1, 2]}  # USER_INSTALL; guild/bot DM/group DM
 
@@ -25,7 +26,7 @@ commands = [
         "name": "抓圖",
         "description": "從 X 抓取角色圖片或影片",
         "options": [
-            CHARACTER_OPTION,
+            CHARACTER_OPTION_RANDOM,
             {"name": "類型", "description": "圖片或影片（預設圖片）", "type": 3, "required": False, "choices": TYPE_CHOICES},
             {"name": "數量", "description": "一次要幾張（預設 1，最多 10）", "type": 4, "required": False, "min_value": 1, "max_value": 10},
             {"name": "作者", "description": "只抽這個畫師/帳號的（子字串比對，不填則不限）", "type": 3, "required": False},

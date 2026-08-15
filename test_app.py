@@ -297,6 +297,19 @@ class TestCollect(unittest.TestCase):
         self.assertEqual([e["url"] for e in photo_by_a], ["https://x.com/a/status/1"])
         self.assertEqual(app_module.pick_pool(entries, "圖片", "nobody"), [])
 
+    def test_pick_random_character_only_picks_from_characters_with_matching_pool(self):
+        # 秧秧只有影片、長離只有圖片——「圖片」隨機模式該只可能抽到長離，不該抽到完全沒圖片的秧秧。
+        app_module.save_collected({
+            "秧秧": [{"url": "https://x.com/a/status/1", "author": "a", "type": "video"}],
+            "長離": [{"url": "https://x.com/b/status/2", "author": "b", "type": "photo"}],
+        })
+        for _ in range(20):
+            self.assertEqual(app_module.pick_random_character("圖片"), "長離")
+
+    def test_pick_random_character_returns_none_when_nothing_matches(self):
+        app_module.save_collected({})
+        self.assertIsNone(app_module.pick_random_character("圖片"))
+
     def test_build_stats_html_lists_all_characters_ranked(self):
         app_module.save_collected({
             "秧秧": [{"url": "https://x.com/a/status/1", "author": "a", "type": "photo"}],
