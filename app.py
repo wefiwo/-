@@ -571,9 +571,21 @@ def interactions():
         if command_name == "抓圖刪除":
             target_url = (opts.get("網址") or "").strip()
             if not delete_entry(character, target_url):
+                # 跟 🗑️ 按鈕那邊（itype == 3）同一個成因：Render 免費方案偶爾要從休眠喚醒，喚醒中的
+                # 那次請求還是會在背景跑完、真的刪掉，只是回應沒能在 Discord 3 秒的互動時限內送達——
+                # 使用者畫面上看起來像沒反應/失敗，其實資料已經改了，再刪一次自然就找不到了。之前只有
+                # 按鈕那邊處理過這個情況（見上面 remove_pick_from_message 的註解），這裡補上同樣的說明，
+                # 不要讓使用者以為自己選錯或程式壞了。
                 return jsonify({
                     "type": 4,
-                    "data": {"content": f"「{character}」的收藏裡找不到這個網址。", "flags": 64},
+                    "data": {
+                        "content": (
+                            f"「{character}」的收藏裡找不到這個網址。\n"
+                            "如果剛剛已經送出過一次、畫面看起來沒反應才又點一次——很可能上一次其實已經"
+                            "刪除成功了（Render 喚醒較慢時常發生），這裡看不到是正常的，不用再重試。"
+                        ),
+                        "flags": 64,
+                    },
                 })
             return jsonify({"type": 4, "data": {"content": f"已從「{character}」的收藏刪除：{target_url}"}})
 
