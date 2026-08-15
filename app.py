@@ -159,16 +159,18 @@ def url_hash(url):
 def delete_entry_by_hash(character, short_hash):
     # 🗑️ 按鈕點擊要在 Discord 的 3 秒回應時限內做完，不能像原本那樣「先讀一次找是哪一筆、再呼叫
     # delete_entry 重新讀一次、寫一次」——一次點擊三趟 Upstash 太容易超時（尤其 Render 免費方案剛從
-    # 休眠喚醒的時候），改成一次讀、原地篩、一次寫，找跟刪合成同一趟。
+    # 休眠喚醒的時候），改成一次讀、原地篩、一次寫，找跟刪合成同一趟。順便把篩完剩下的清單一起回傳
+    # ——呼叫端接著要用剩下的清單重畫訊息內容，不用再讀一次 Upstash（多這一趟讀曾經把已經修好的
+    # 逾時問題帶回來過）。
     data = load_collected()
     bucket = data.get(character, [])
     remaining = [e for e in bucket if url_hash(e["url"]) != short_hash]
     if len(remaining) == len(bucket):
-        return None
+        return None, remaining
     deleted = next(e for e in bucket if url_hash(e["url"]) == short_hash)
     data[character] = remaining
     save_collected(data)
-    return deleted
+    return deleted, remaining
 
 
 def media_emoji(entry_type):
@@ -317,11 +319,12 @@ def build_pick_reply(character, media_type, entries):
     return messages[0]["content"], messages[0]["components"], messages[1:]
 
 
-def remove_pick_from_message(message, character, clicked_custom_id):
+def remove_pick_from_message(message, character, remaining_bucket, clicked_custom_id):
     # 點垃圾桶只該讓「這一張」從畫面上消失，不是整則訊息（原本 type 7 UPDATE_MESSAGE 直接整則換成
     # 確認文字，會連同一則裡其他還沒刪的張一起消失）。這裡改成用該則訊息現有的按鈕列表（扣掉被點的
     # 那顆）反查目前收藏裡還在的網址，重新組出只少一張的內容——用按鈕本身當「這則訊息裡有哪幾張」的
-    # 真相來源，不用去解析舊的文字內容。
+    # 真相來源，不用去解析舊的文字內容。remaining_bucket 由呼叫端的 delete_entry_by_hash 順便回傳，
+    # 這裡不再自己讀一次 Upstash——3 秒時限內每多一趟讀寫都是逾時風險。
     # ponytail: 剩下的張保留原本的編號（不會重排成連續 1,2,3...），省下同步改 custom_id 對應關係的
     # 麻煩——編號留缺口不影響能不能點開連結，只是好看度打折。
     header = ""
@@ -329,7 +332,7 @@ def remove_pick_from_message(message, character, clicked_custom_id):
         first_line, _, _ = message["content"].partition("\n")
         header = first_line + "\n"
 
-    by_hash = {url_hash(e["url"]): e["url"] for e in load_collected().get(character, [])}
+    by_hash = {url_hash(e["url"]): e["url"] for e in remaining_bucket}
     kept_buttons, lines = [], []
     for row in message.get("components", []):
         for button in row["components"]:
@@ -415,9 +418,11 @@ def interactions():
         custom_id = body["data"]["custom_id"]
         if custom_id.startswith("del:"):
             _, character, short_hash = custom_id.split(":", 2)
-            if not delete_entry_by_hash(character, short_hash):
-                return jsonify({"type": 7, "data": {"content": "找不到這筆收藏，可能已經刪除過了。", "components": []}})
-            content, components = remove_pick_from_message(body["message"], character, custom_id)
+            _, remaining = delete_entry_by_hash(character, short_hash)
+            # 找不到（這顆按鈕的那筆已經刪過了——常見於上一次點擊其實刪除成功了，只是那次的回應在
+            # Discord 3 秒時限內沒送到，畫面沒更新，使用者以為沒刪又點了一次）也照樣重畫這則訊息，
+            # 只是把這顆失效的按鈕拿掉，不要整則清空、連累其他還沒刪的張。
+            content, components = remove_pick_from_message(body["message"], character, remaining, custom_id)
             return jsonify({"type": 7, "data": {"content": content, "components": components}})
         return ("", 400)
 

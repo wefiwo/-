@@ -77,14 +77,17 @@ class TestCollect(unittest.TestCase):
     def test_delete_entry_by_hash_removes_matching_entry(self):
         entry = {"url": "https://x.com/a/status/1", "author": "a", "type": "photo"}
         app_module.save_collected({"秧秧": [entry]})
-        deleted = app_module.delete_entry_by_hash("秧秧", app_module.url_hash(entry["url"]))
+        deleted, remaining = app_module.delete_entry_by_hash("秧秧", app_module.url_hash(entry["url"]))
         self.assertEqual(deleted, entry)
+        self.assertEqual(remaining, [])
         self.assertEqual(app_module.load_collected()["秧秧"], [])
 
     def test_delete_entry_by_hash_returns_none_when_not_found(self):
         entry = {"url": "https://x.com/a/status/1", "author": "a", "type": "photo"}
         app_module.save_collected({"秧秧": [entry]})
-        self.assertIsNone(app_module.delete_entry_by_hash("秧秧", "deadbeef0000"))
+        deleted, remaining = app_module.delete_entry_by_hash("秧秧", "deadbeef0000")
+        self.assertIsNone(deleted)
+        self.assertEqual(remaining, [entry])
         self.assertEqual(len(app_module.load_collected()["秧秧"]), 1)
 
     def test_remove_pick_from_message_keeps_the_other_picks(self):
@@ -95,9 +98,9 @@ class TestCollect(unittest.TestCase):
         message = {"content": content, "components": components}
 
         clicked_id = components[0]["components"][1]["custom_id"]  # entry 2 的按鈕
-        app_module.delete_entry_by_hash("秧秧", clicked_id.split(":", 2)[2])
+        _, remaining = app_module.delete_entry_by_hash("秧秧", clicked_id.split(":", 2)[2])
 
-        new_content, new_components = app_module.remove_pick_from_message(message, "秧秧", clicked_id)
+        new_content, new_components = app_module.remove_pick_from_message(message, "秧秧", remaining, clicked_id)
         self.assertIn("**秧秧**", new_content)  # header 保留
         self.assertNotIn("status/2", new_content)
         self.assertIn("status/1", new_content)
@@ -111,11 +114,28 @@ class TestCollect(unittest.TestCase):
         message = {"content": content, "components": components}
 
         clicked_id = components[0]["components"][0]["custom_id"]
-        app_module.delete_entry_by_hash("秧秧", clicked_id.split(":", 2)[2])
+        _, remaining = app_module.delete_entry_by_hash("秧秧", clicked_id.split(":", 2)[2])
 
-        new_content, new_components = app_module.remove_pick_from_message(message, "秧秧", clicked_id)
+        new_content, new_components = app_module.remove_pick_from_message(message, "秧秧", remaining, clicked_id)
         self.assertIn("已從", new_content)
         self.assertEqual(new_components, [])
+
+    def test_remove_pick_from_message_drops_a_stale_button_without_wiping_the_rest(self):
+        # 對應「上一次點擊其實刪除成功了，但回應逾時、畫面沒更新，使用者又點了一次同一顆」的情境：
+        # delete_entry_by_hash 這次找不到（已經刪過），但訊息裡其他還在收藏裡的張不該被牽連清空。
+        entries = [{"url": f"https://x.com/a/status/{i}", "author": "a", "type": "photo"} for i in range(1, 4)]
+        content, components, _ = app_module.build_pick_reply("秧秧", "圖片", entries)
+        message = {"content": content, "components": components}
+        clicked_id = components[0]["components"][0]["custom_id"]  # entry 1，假裝已經被刪過了
+
+        app_module.save_collected({"秧秧": entries[1:]})  # 收藏裡現在只剩 entry 2、3
+        _, remaining = app_module.delete_entry_by_hash("秧秧", clicked_id.split(":", 2)[2])  # 找不到
+
+        new_content, new_components = app_module.remove_pick_from_message(message, "秧秧", remaining, clicked_id)
+        self.assertNotIn("已從", new_content)  # 不是整則清空
+        self.assertIn("status/2", new_content)
+        self.assertIn("status/3", new_content)
+        self.assertEqual(len(new_components[0]["components"]), 2)
 
     def test_build_pick_reply_single_entry_has_no_numbering(self):
         entries = [{"url": "https://x.com/a/status/1", "author": "a", "type": "photo"}]
