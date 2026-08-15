@@ -96,6 +96,28 @@ HASHTAGS_PINYIN = build_pinyin_table(HASHTAGS)
 HASHTAGS_BOPOMOFO = build_bopomofo_table(HASHTAGS)
 
 
+def matched_characters(text, hashtags, require_hash=False):
+    # /collect 對 X/IG 貼文用寬鬆比對（關鍵字在文字裡出現就算），FB 則要求關鍵字必須以 #keyword
+    # 的形式出現（見 app.py 頂端註解／CLAUDE.md 說明，plain-text 提到角色名字在 FB 上太常見）。
+    lower = text.lower()
+    if require_hash:
+        raw = {name: [t for t in tags if f"#{t.lower().lstrip('#')}" in lower] for name, tags in hashtags.items()}
+    else:
+        raw = {name: [t for t in tags if t.lower() in lower] for name, tags in hashtags.items()}
+    matched = {name: kws for name, kws in raw.items() if kws}
+
+    # 同一篇貼文如果角色 A 的命中關鍵字整個是角色 B 的某個命中關鍵字的「真子字串」（不含完全相等），
+    # 代表這其實是同一個名字更明確的型態（例如「秧秧・玄翎」文字裡天生就包含「秧秧」)，這篇貼文只
+    # 該算進比較明確的 B，不該連比較籠統的基礎角色 A 也一起算進去——不然以後新增角色的型態/別稱，
+    # 基礎角色的收藏就會被灌入型態專屬的圖。相同字串（例如刻意共用的 CP tag）不算子字串，兩邊都留著。
+    def shadowed_by_a_more_specific_match(name):
+        own_kws = [kw.lower() for kw in matched[name]]
+        other_kws = [kw.lower() for other, kws in matched.items() if other != name for kw in kws]
+        return any(kw in other_kw and kw != other_kw for kw in own_kws for other_kw in other_kws)
+
+    return [name for name in matched if not shadowed_by_a_more_specific_match(name)]
+
+
 def _contains_syllables(needle, haystack):
     return any(haystack[i:i + len(needle)] == needle for i in range(len(haystack) - len(needle) + 1))
 
@@ -531,13 +553,9 @@ def collect():
     else:
         abort(400)  # reject anything that isn't actually a real x.com/twitter.com/instagram.com/facebook.com post link
 
-    lower_text = text.lower()
-    if is_facebook:
-        # FB 貼文本文常常會提到角色名字但沒配圖（分享心得、討論串），純文字比對太容易誤觸——
-        # 所以在 FB 上關鍵字「一定」要帶 # 才算數，X/IG 維持原本「文字裡出現就算」的寬鬆比對。
-        matched = [name for name, tags in HASHTAGS.items() if any(f"#{t.lower().lstrip('#')}" in lower_text for t in tags)]
-    else:
-        matched = [name for name, tags in HASHTAGS.items() if any(t.lower() in lower_text for t in tags)]
+    # FB 貼文本文常常會提到角色名字但沒配圖（分享心得、討論串），純文字比對太容易誤觸——所以在 FB
+    # 上關鍵字「一定」要帶 # 才算數，X/IG 維持原本「文字裡出現就算」的寬鬆比對。
+    matched = matched_characters(text, HASHTAGS, require_hash=is_facebook)
     if not matched:
         return jsonify({"added_to": []})
 

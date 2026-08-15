@@ -57,6 +57,24 @@ class TestCollect(unittest.TestCase):
 
         self.assertEqual(len(app_module.load_collected()["秧秧"]), 1)
 
+    def test_matched_characters_prefers_the_more_specific_alt_form_over_the_base_name(self):
+        # 「秧秧・玄翎」的關鍵字天生就包含「秧秧」——貼文同時命中兩者時，只該算進比較明確的
+        # 「秧秧・玄翎」，不該連基礎角色「秧秧」也一起算進去。
+        hashtags = {"秧秧": ["秧秧"], "秧秧・玄翎": ["秧秧玄翎", "秧秧・玄翎"]}
+        self.assertEqual(app_module.matched_characters("看這張秧秧玄翎的圖", hashtags), ["秧秧・玄翎"])
+        # 貼文只提到基礎角色、完全沒提到玄翎專屬字樣時，還是照樣算進基礎角色。
+        self.assertEqual(app_module.matched_characters("看這張秧秧的圖", hashtags), ["秧秧"])
+
+    def test_matched_characters_keeps_intentionally_shared_keywords_on_both_sides(self):
+        # Denrika 這種故意共用的 CP tag，兩邊關鍵字完全相同（不是子字串關係），兩個角色都該留著。
+        hashtags = {"西格莉卡": ["Denrika"], "達妮婭": ["Denrika"]}
+        self.assertEqual(set(app_module.matched_characters("cp art #Denrika", hashtags)), {"西格莉卡", "達妮婭"})
+
+    def test_matched_characters_requires_hash_on_facebook(self):
+        hashtags = {"心": ["心"]}
+        self.assertEqual(app_module.matched_characters("聊到心這個角色", hashtags, require_hash=True), [])
+        self.assertEqual(app_module.matched_characters("看 #心 的圖", hashtags, require_hash=True), ["心"])
+
     def test_delete_entry_removes_matching_url(self):
         app_module.save_collected({"秧秧": [{"url": "https://x.com/a/status/1", "author": "a", "type": "photo"}]})
         self.assertTrue(app_module.delete_entry("秧秧", "https://x.com/a/status/1"))
