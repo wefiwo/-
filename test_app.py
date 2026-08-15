@@ -223,6 +223,18 @@ class TestCollect(unittest.TestCase):
         self.assertIn("4 個還是空的", content)
         self.assertIn("秧秧 - 2", content)
 
+    def test_build_stats_content_with_character_adds_count_and_rank(self):
+        app_module.save_collected({
+            "秧秧": [
+                {"url": "https://x.com/a/status/1", "author": "a", "type": "photo"},
+                {"url": "https://x.com/a/status/2", "author": "a", "type": "video"},
+            ],
+            "長離": [{"url": "https://x.com/b/status/3", "author": "b", "type": "photo"}],
+        })
+        content = app_module.build_stats_content("長離")
+        self.assertIn("**長離**：📷 1 張、🎬 0 部，共 1 筆", content)
+        self.assertIn("排名第 2／6 名", content)  # 6 = len(test HASHTAGS)，秧秧(2) 排第 1
+
     def test_url_choices_filters_by_author_or_url_substring(self):
         app_module.save_collected({"秧秧": [
             {"url": "https://x.com/artistA/status/1", "author": "artistA", "type": "photo"},

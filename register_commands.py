@@ -15,6 +15,7 @@ app_id = requests.get(f"{API_BASE}/oauth2/applications/@me", headers=headers).js
 print("Application ID:", app_id)
 
 CHARACTER_OPTION = {"name": "角色", "description": "角色名稱", "type": 3, "required": True, "autocomplete": True}
+CHARACTER_OPTION_OPTIONAL = {**CHARACTER_OPTION, "required": False, "description": "只看這個角色的收藏數與排名（不填則顯示整體統計）"}
 TYPE_CHOICES = [{"name": "圖片", "value": "圖片"}, {"name": "影片", "value": "影片"}]
 COMMON = {"integration_types": [1], "contexts": [0, 1, 2]}  # USER_INSTALL; guild/bot DM/group DM
 
@@ -51,7 +52,7 @@ commands = [
         **COMMON,
         "name": "抓圖統計",
         "description": "看所有角色的收藏概覽",
-        "options": [],
+        "options": [CHARACTER_OPTION_OPTIONAL],
     },
 ]
 

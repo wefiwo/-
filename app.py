@@ -240,7 +240,7 @@ def build_list_content(character, media_type_label):
     return header + "\n" + "\n".join(lines)
 
 
-def build_stats_content():
+def build_stats_content(character=None):
     data = load_collected()
     counts = {name: len(data.get(name, [])) for name in HASHTAGS}
     with_entries = {name: n for name, n in counts.items() if n}
@@ -256,6 +256,15 @@ def build_stats_content():
     if top:
         lines.append("\n收藏最多的前 10 個：")
         lines += [f"{i}. {name} - {n}" for i, (name, n) in enumerate(top, 1)]
+
+    if character:
+        entries = data.get(character, [])
+        n_photo = sum(1 for e in entries if e.get("type") == "photo")
+        n_video = sum(1 for e in entries if e.get("type") == "video")
+        # 名次：全部角色依收藏數排序，同分維持 hashtags.json 原本順序（沒有特別去搶並列名次的意義）。
+        ranked = sorted(counts.items(), key=lambda kv: kv[1], reverse=True)
+        rank = next(i for i, (name, _) in enumerate(ranked, 1) if name == character)
+        lines.append(f"\n**{character}**：📷 {n_photo} 張、🎬 {n_video} 部，共 {counts[character]} 筆，排名第 {rank}／{len(HASHTAGS)} 名")
     return "\n".join(lines)
 
 
@@ -453,7 +462,13 @@ def interactions():
         opts = {o["name"]: o["value"] for o in body["data"].get("options", [])}
 
         if command_name == "抓圖統計":
-            return jsonify({"type": 4, "data": {"content": build_stats_content()}})
+            stat_character = opts.get("角色", "")
+            if stat_character and stat_character not in HASHTAGS:
+                return jsonify({
+                    "type": 4,
+                    "data": {"content": f"找不到「{stat_character}」的 Hashtag，請先在 hashtags.json 新增。", "flags": 64},
+                })
+            return jsonify({"type": 4, "data": {"content": build_stats_content(stat_character or None)}})
 
         character = opts.get("角色", "")
         if character not in HASHTAGS:
