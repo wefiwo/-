@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         抓圖 Bot - X/IG/FB 按讚自動蒐集
 // @namespace    ponytail
-// @version      4.8
+// @version      4.9
 // @description  在 X、Instagram 或 Facebook 按讚符合角色 Hashtag 的貼文時，自動送去自己的 Discord 機器人後端收藏；X 上轉推則彈出輸入框手動指定角色；Alt+Q/Alt+W 快捷鍵切換本機開關
 // @match        https://x.com/*
 // @match        https://twitter.com/*
@@ -22,7 +22,7 @@
 (function () {
   "use strict";
 
-  const BACKEND_URL = "https://twitterlian-dong-dcshou-tu-bot.onrender.com";
+  const BACKEND_URL = "https://bobobobob.pythonanywhere.com";
 
   // 密鑰存在 Tampermonkey 自己的儲存空間，不寫在腳本內容裡——這樣腳本才能安全自動更新，
   // 不會被新版覆蓋掉你本機設定的密鑰。第一次執行才會問一次，之後都記得住。
