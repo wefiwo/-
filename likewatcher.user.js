@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         抓圖 Bot - X/IG/FB 按讚自動蒐集
 // @namespace    ponytail
-// @version      4.9
+// @version      5.0
 // @description  在 X、Instagram 或 Facebook 按讚符合角色 Hashtag 的貼文時，自動送去自己的 Discord 機器人後端收藏；X 上轉推則彈出輸入框手動指定角色；Alt+Q/Alt+W 快捷鍵切換本機開關
 // @match        https://x.com/*
 // @match        https://twitter.com/*
@@ -22,7 +22,24 @@
 (function () {
   "use strict";
 
-  const BACKEND_URL = "https://bobobobob.pythonanywhere.com";
+  // 後端網址跟密鑰一樣存在 Tampermonkey 自己的儲存空間，不寫死在腳本內容裡——這支腳本是公開分享的
+  // 模板，每個 fork 部署的後端網址都不一樣，寫死的話換人用就要自己去改程式碼那一行；改成跟
+  // COLLECT_SECRET 同一招，第一次執行問一次、之後都記得住，也能透過選單重新設定。沒有預設值：故意
+  // 逼第一次使用一定要自己填，不會有人忘記改、資料默默送去別人的後端。
+  function getBackendUrl() {
+    const saved = GM_getValue("backendUrl", "");
+    if (saved) return saved;
+    const entered = prompt("第一次設定：請貼上你的後端網址（例如 https://your-app.onrender.com，不要留結尾斜線）");
+    const url = entered ? entered.trim().replace(/\/+$/, "") : "";
+    if (url) GM_setValue("backendUrl", url);
+    return url;
+  }
+  GM_registerMenuCommand("重新設定後端網址", () => {
+    const entered = prompt("輸入新的後端網址：", GM_getValue("backendUrl", ""));
+    if (entered) GM_setValue("backendUrl", entered.trim().replace(/\/+$/, ""));
+  });
+
+  const BACKEND_URL = getBackendUrl();
 
   // 密鑰存在 Tampermonkey 自己的儲存空間，不寫在腳本內容裡——這樣腳本才能安全自動更新，
   // 不會被新版覆蓋掉你本機設定的密鑰。第一次執行才會問一次，之後都記得住。
@@ -95,6 +112,7 @@
 
   function loadHashtags(cb) {
     if (hashtagsCache) return cb(hashtagsCache);
+    if (!BACKEND_URL) return console.error("[抓圖收藏] 沒有設定後端網址，取消載入（用選單「重新設定後端網址」補上）");
     GM_xmlhttpRequest({
       method: "GET",
       url: BACKEND_URL + "/hashtags",

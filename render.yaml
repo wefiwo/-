@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: zhuatu-bot
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: waitress-serve --host=0.0.0.0 --port=$PORT app:app
+    envVars:
+      - key: DISCORD_PUBLIC_KEY
+        sync: false
+      - key: DISCORD_BOT_TOKEN
+        sync: false
+      - key: DISCORD_APPLICATION_ID
+        sync: false
+      - key: COLLECT_SECRET
+        generateValue: true

@@ -13,6 +13,7 @@ os.environ.setdefault("DISCORD_PUBLIC_KEY", "00" * 32)
 os.environ.setdefault("DISCORD_BOT_TOKEN", "test-token")
 os.environ.setdefault("DISCORD_APPLICATION_ID", "123")
 os.environ.setdefault("COLLECT_SECRET", "test-secret")
+os.environ.setdefault("AUTO_REGISTER_COMMANDS", "false")  # 假的 test-token 打 Discord API 一定失敗，不用真的打
 
 import app as app_module  # noqa: E402
 

@@ -1,5 +1,11 @@
-"""Run once (and again whenever a command's options/shape changes) to register the /抓圖,
-/抓圖清單, /抓圖刪除, /抓圖統計 slash commands."""
+"""Registers the /抓圖, /抓圖清單, /抓圖刪除, /抓圖統計 slash commands. `register()` is imported and
+called once by app.py on startup (see AUTO_REGISTER_COMMANDS below), so a fresh fork's commands show
+up without the owner needing to know this script exists. Kept runnable standalone too — that's the
+only way to do instant-propagate testing in one server via GUILD_ID (see CLAUDE.md), since a fresh
+app boot only ever registers the global (slow-to-propagate) command set.
+
+Usage: python register_commands.py
+"""
 import os
 
 import requests
@@ -8,11 +14,6 @@ from dotenv import load_dotenv
 load_dotenv()
 
 API_BASE = "https://discord.com/api/v10"
-BOT_TOKEN = os.environ["DISCORD_BOT_TOKEN"]
-headers = {"Authorization": f"Bot {BOT_TOKEN}"}
-
-app_id = requests.get(f"{API_BASE}/oauth2/applications/@me", headers=headers).json()["id"]
-print("Application ID:", app_id)
 
 CHARACTER_OPTION = {"name": "角色", "description": "角色名稱", "type": 3, "required": True, "autocomplete": True}
 CHARACTER_OPTION_OPTIONAL = {**CHARACTER_OPTION, "required": False, "description": "只看這個角色的收藏數與排名（不填則顯示整體統計）"}
@@ -20,7 +21,7 @@ CHARACTER_OPTION_RANDOM = {**CHARACTER_OPTION, "required": False, "description":
 TYPE_CHOICES = [{"name": "圖片", "value": "圖片"}, {"name": "影片", "value": "影片"}]
 COMMON = {"integration_types": [1], "contexts": [0, 1, 2]}  # USER_INSTALL; guild/bot DM/group DM
 
-commands = [
+COMMANDS = [
     {
         **COMMON,
         "name": "抓圖",
@@ -58,11 +59,26 @@ commands = [
     },
 ]
 
-guild_id = os.environ.get("GUILD_ID")  # optional: set for instant-propagate testing in one server
-endpoint = f"{API_BASE}/applications/{app_id}/guilds/{guild_id}/commands" if guild_id else f"{API_BASE}/applications/{app_id}/commands"
 
-resp = requests.put(endpoint, headers=headers, json=commands)
-resp.raise_for_status()
-print("Registered:", resp.json())
-if not guild_id:
-    print("這是全域指令，Discord 同步到各端可能要等最多 1 小時；要秒生效測試，先在 .env 設 GUILD_ID 再重跑一次。")
+def register(app_id, bot_token, guild_id=None):
+    headers = {"Authorization": f"Bot {bot_token}"}
+    endpoint = (
+        f"{API_BASE}/applications/{app_id}/guilds/{guild_id}/commands" if guild_id
+        else f"{API_BASE}/applications/{app_id}/commands"
+    )
+    resp = requests.put(endpoint, headers=headers, json=COMMANDS)
+    resp.raise_for_status()
+    return resp.json()
+
+
+if __name__ == "__main__":
+    BOT_TOKEN = os.environ["DISCORD_BOT_TOKEN"]
+    headers = {"Authorization": f"Bot {BOT_TOKEN}"}
+    app_id = requests.get(f"{API_BASE}/oauth2/applications/@me", headers=headers).json()["id"]
+    print("Application ID:", app_id)
+
+    guild_id = os.environ.get("GUILD_ID")  # optional: set for instant-propagate testing in one server
+    result = register(app_id, BOT_TOKEN, guild_id)
+    print("Registered:", result)
+    if not guild_id:
+        print("這是全域指令，Discord 同步到各端可能要等最多 1 小時；要秒生效測試，先在 .env 設 GUILD_ID 再重跑一次。")

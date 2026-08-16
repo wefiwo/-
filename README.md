@@ -55,7 +55,7 @@ pip install -r requirements.txt
 python register_commands.py
 ```
 
-改了 `register_commands.py` 裡的 command 定義（例如加選項）之後要重跑一次。
+改了 `register_commands.py` 裡的 command 定義（例如加選項）之後要重跑一次。（`app.py` 啟動時也會自動跑一次同樣的註冊，這支手動指令主要是給本機測試用——想用 `GUILD_ID` 讓改動秒生效在單一伺服器測試時才需要，見下方「本地測試」。正式部署不用另外手動跑這支。）
 
 ## 5. 本地測試
 
@@ -113,33 +113,23 @@ waitress-serve --host=0.0.0.0 --port=$PORT app:app
 - **Railway / Fly.io**：流程類似，接 GitHub repo、設同樣的 Start Command、環境變數搬進它的 Variables 頁面即可。
 - **自己的 VPS**：一樣跑 `waitress-serve`，前面接 Nginx/Caddy 做 TLS。
 
-部署後把正式網域的 `/interactions` 填回 Interactions Endpoint URL，`.env` 的內容也要帶到部署環境的環境變數頁面，不要把 `.env` 傳上去（`.gitignore` 已經排除它）。**部署完後記得把 `likewatcher.user.js` 的 `BACKEND_URL` 也改成正式網域**，不然按讚蒐集還是只會送到你本機（`app.py` 沒開就會蒐集失敗）。
+部署後把正式網域的 `/interactions` 填回 Interactions Endpoint URL，`.env` 的內容也要帶到部署環境的環境變數頁面，不要把 `.env` 傳上去（`.gitignore` 已經排除它）。**部署完後記得把 `likewatcher.user.js` 的後端網址也改成正式網域**（腳本第一次執行會自己跳窗問你，不用改程式碼），不然按讚蒐集還是只會送到你本機（`app.py` 沒開就會蒐集失敗）。
 
 ### 用 Render 部署
 
-1. **把專案推上 GitHub**（Render 從 repo 部署）：
-   ```bash
-   git init
-   git add .
-   git commit -m "init"
-   ```
-   去 GitHub 網站新增一個空 repo（不要勾 Add README），複製它給的網址，然後：
-   ```bash
-   git remote add origin <你的repo網址>
-   git branch -M main
-   git push -u origin main
-   ```
-2. 去 https://render.com 用 GitHub 帳號登入 → **New +** → **Web Service** → 選剛剛那個 repo。
-3. 設定：
-   - Runtime: Python
-   - Build Command: `pip install -r requirements.txt`
-   - Start Command: `waitress-serve --host=0.0.0.0 --port=$PORT app:app`
-   - Instance Type: Free
-4. **Environment** 分頁加五個變數（照你本機 `.env` 的值填，不要含 `GUILD_ID`）：`DISCORD_PUBLIC_KEY`、`DISCORD_BOT_TOKEN`、`DISCORD_APPLICATION_ID`、`COLLECT_SECRET`。
-5. Deploy，等它跑完會給一個 `https://xxx.onrender.com` 網址。
-6. 回 Developer Portal 把 Interactions Endpoint URL 換成 `https://xxx.onrender.com/interactions`，存檔。
-7. `likewatcher.user.js` 的 `BACKEND_URL` 改成 `https://xxx.onrender.com`。
-8. 本機 `.env` 把 `GUILD_ID` 那行刪掉（或整行拿掉不要留著），重跑一次 `python register_commands.py` 改回註冊全域指令，讓任何人裝了都能用（同步最多等 1 小時）。
+repo 裡的 `render.yaml` 已經寫好 Build/Start Command，一鍵部署：
+
+1. **Fork 這個 repo**（右上角 Fork 按鈕）——想換角色的話這時候先改 `hashtags.json`，之後隨時都能再改。
+2. 點下面這個按鈕，用 GitHub 帳號登入/連接 Render（沒有帳號的話這步會順便讓你註冊，不用卡）：
+
+   [![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/wefiwo/-)
+
+   如果它問要部署哪個 repo，選你剛剛 fork 的那份，不是原始的。
+3. Render 會照 `render.yaml` 自動抓 Build/Start Command，跳出表單要你填 3 個值（去 [Discord Developer Portal](https://discord.com/developers/applications) 你自己建的 App 裡拿）：`DISCORD_PUBLIC_KEY`、`DISCORD_BOT_TOKEN`、`DISCORD_APPLICATION_ID`。`COLLECT_SECRET` 不用自己想，Render 會自動幫你產生一組——記得部署完後去 **Environment** 分頁複製這組值，等下設定 userscript 要用。
+4. 按 Deploy，等它跑完會給一個 `https://xxx.onrender.com` 網址。
+5. 回 Developer Portal 把 Interactions Endpoint URL 換成 `https://xxx.onrender.com/interactions`，存檔。
+
+**不用再手動跑 `register_commands.py`**——`app.py` 啟動時會自動註冊一次 slash command（全域指令，同步到各端最多等 1 小時，這點沒變）。
 
 免費方案閒置一段時間會休眠，有人打 `/抓圖` 時第一次可能要多等幾秒它醒過來，之後就正常。
 

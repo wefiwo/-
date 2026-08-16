@@ -49,6 +49,18 @@ APP_ID = os.environ.get("DISCORD_APPLICATION_ID") or requests.get(
     f"{API_BASE}/oauth2/applications/@me", headers={"Authorization": f"Bot {BOT_TOKEN}"}
 ).json()["id"]
 
+# 一鍵部署（Render Blueprint 之類）填完環境變數就直接能用，不用另外叫使用者知道要跑
+# register_commands.py——app 啟動時自動註冊一次。PUT 整批覆蓋是冪等的，重複呼叫不會有副作用，
+# 多花一次 API 呼叫換取「fork 完全新手也不會漏掉這步」划算。測試環境用 AUTO_REGISTER_COMMANDS=false
+# 關掉，不然每次跑測試都會真的打一次 Discord API（而且假的 test-token 一定失敗，只是浪費時間）。
+if os.environ.get("AUTO_REGISTER_COMMANDS", "true").lower() != "false":
+    try:
+        from register_commands import register as _register_commands
+        _register_commands(APP_ID, BOT_TOKEN)
+        print("[startup] 已自動註冊 slash commands", flush=True)
+    except Exception as e:
+        print(f"[startup] 自動註冊 slash commands 失敗（不影響其他功能，需要的話手動跑一次 register_commands.py）：{e}", flush=True)
+
 TWEET_URL_RE = re.compile(r"^https://(?:x|twitter)\.com/([A-Za-z0-9_]{1,15})/status/(\d+)$")
 INSTAGRAM_URL_RE = re.compile(r"^https://(?:www\.)?instagram\.com/(?:p|reel)/([A-Za-z0-9_-]+)/?$")
 INSTAGRAM_USERNAME_RE = re.compile(r"^[A-Za-z0-9_.]{1,30}$")
