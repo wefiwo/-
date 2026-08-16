@@ -97,6 +97,10 @@ python -m unittest
 
 不用加 `#`，一個角色可以對多個 hashtag（例如簡稱 + 全名）。存檔後要重啟 `app.py` 才會生效（開機時讀一次進記憶體）；瀏覽器那邊的腳本每次重新整理頁面就會自動拉到最新的清單，不用改腳本本身。
 
+改完 `hashtags.json` 後跑 `python generate_keyword_table.py`，會自動重新產生 `角色關鍵字對照表.txt`（給人看的對照表）——不用再手動同步兩份檔案。
+
+**把整個作品換掉（例如把現有角色全刪、換成別的作品）**：這個專案沒有寫死任何特定作品或角色——`hashtags.json` 整包換成你自己的角色關鍵字就好，程式邏輯完全不用動。唯一可能要順手調整的是 `app.py` 開頭的 `load_phrases_dict()`（拼音同音字校正，是給原本角色名字的多音字問題修的，換角色後這幾行通常可以直接刪掉，除非你的新角色也有類似的拼音誤判問題）。
+
 ## 7. 部署
 
 隨便一台能長開的機器/PaaS 都行，重點是要有公網 HTTPS。`requirements.txt` 裡的 `waitress` 是跨平台的 WSGI server（Windows/Linux 都能跑），Start Command 統一用：
