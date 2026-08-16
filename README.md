@@ -35,6 +35,7 @@ requirements.txt
    - Installation Contexts 勾選 `User Install`（讓別人可以把這個 App 裝到自己帳號，不用邀請 bot 進伺服器）。
    - Install Link 選 Discord Provided Link 即可。
 4. **General Information → Interactions Endpoint URL**：填你的 `https://<你的網域>/interactions`（見下方部署）。存檔時 Discord 會直接打一個 PING 過來驗證簽章，這一步 `app.py` 必須已經在跑且能被公網打到才會存檔成功。
+5. **拿你自己的使用者 ID**，填到 `.env` 的 `OWNER_DISCORD_ID`：Discord 設定 → 進階 → 開啟**開發者模式** → 點自己的頭像/使用者名稱 → **複製使用者 ID**。`/抓圖刪除`跟 🗑️ 按鈕只認這個 ID——User Install 讓任何看過這個 App 被用過的人都能自己裝上，裝完就能打指令，跟 `COLLECT_SECRET` 完全無關，這個值不設的話兩個刪除功能會直接擋掉所有人（安全預設，不會有沒設定就先開放給任何人刪的空窗期）。
 
 ## 2. 安裝套件
 
@@ -46,8 +47,7 @@ pip install -r requirements.txt
 
 1. 瀏覽器裝 **Tampermonkey** 擴充功能（Chrome/Edge/Firefox 都有）。
 2. Tampermonkey 面板 → 建立新腳本，把 [likewatcher.user.js](likewatcher.user.js) 的內容整份貼進去存檔。
-3. 檔案開頭 `COLLECT_SECRET` 已經跟你 `.env` 的值對好了；如果 `.env` 的 `COLLECT_SECRET` 之後改掉，這裡也要跟著改。
-4. 本機測試時 `BACKEND_URL` 保持 `http://localhost:8787` 就好（腳本是在你自己電腦的瀏覽器裡跑，直接打自己電腦的 Flask，不需要 ngrok，跟 Discord Interactions Endpoint 是兩件事）。之後部署到 Render，才需要把它換成 Render 網址（見部署章節）。
+3. 在 X/Instagram/Facebook 上第一次觸發（按讚/轉推）時，腳本會跳窗依序問**後端網址**跟 **`COLLECT_SECRET`**——本機測試填 `http://localhost:8787`（跟 `.env` 的 `COLLECT_SECRET` 一致；腳本是在你自己電腦的瀏覽器裡跑，直接打自己電腦的 Flask，不需要 ngrok，跟 Discord Interactions Endpoint 是兩件事）。這兩個值存在 Tampermonkey 自己的儲存空間，不是寫在腳本檔案裡，之後想改用 Tampermonkey 選單裡的「重新設定後端網址」/「重新設定 COLLECT_SECRET」。之後部署到 Render，記得把後端網址改成 Render 網址（見部署章節）。
 
 ## 4. 註冊 Slash Command
 
@@ -125,7 +125,7 @@ repo 裡的 `render.yaml` 已經寫好 Build/Start Command，一鍵部署：
    [![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/wefiwo/-)
 
    如果它問要部署哪個 repo，選你剛剛 fork 的那份，不是原始的。
-3. Render 會照 `render.yaml` 自動抓 Build/Start Command，跳出表單要你填 3 個值（去 [Discord Developer Portal](https://discord.com/developers/applications) 你自己建的 App 裡拿）：`DISCORD_PUBLIC_KEY`、`DISCORD_BOT_TOKEN`、`DISCORD_APPLICATION_ID`。`COLLECT_SECRET` 不用自己想，Render 會自動幫你產生一組——記得部署完後去 **Environment** 分頁複製這組值，等下設定 userscript 要用。
+3. Render 會照 `render.yaml` 自動抓 Build/Start Command，跳出表單要你填 4 個值：`DISCORD_PUBLIC_KEY`、`DISCORD_BOT_TOKEN`、`DISCORD_APPLICATION_ID`（去 [Discord Developer Portal](https://discord.com/developers/applications) 你自己建的 App 裡拿）、`OWNER_DISCORD_ID`（見上方「Discord Developer Portal 設定」第 5 步——這個沒填的話 `/抓圖刪除` 跟 🗑️ 按鈕會直接對所有人擋住，包括你自己）。`COLLECT_SECRET` 不用自己想，Render 會自動幫你產生一組——記得部署完後去 **Environment** 分頁複製這組值，等下設定 userscript 要用。
 4. 按 Deploy，等它跑完會給一個 `https://xxx.onrender.com` 網址。
 5. 回 Developer Portal 把 Interactions Endpoint URL 換成 `https://xxx.onrender.com/interactions`，存檔。
 

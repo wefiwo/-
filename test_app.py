@@ -125,6 +125,17 @@ class TestCollect(unittest.TestCase):
         self.assertEqual(remaining, [entry])
         self.assertEqual(len(app_module.load_collected()["秧秧"]), 1)
 
+    def test_interaction_user_id_reads_from_guild_member(self):
+        body = {"member": {"user": {"id": "111"}}, "user": {"id": "222"}}
+        self.assertEqual(app_module.interaction_user_id(body), "111")  # 伺服器情境優先看 member.user
+
+    def test_interaction_user_id_reads_from_top_level_user_in_dm(self):
+        body = {"user": {"id": "222"}}  # DM/群組 DM 情境沒有 member
+        self.assertEqual(app_module.interaction_user_id(body), "222")
+
+    def test_interaction_user_id_returns_empty_string_when_neither_present(self):
+        self.assertEqual(app_module.interaction_user_id({}), "")
+
     def test_remove_pick_from_message_keeps_the_other_picks(self):
         # 5 張一起抽出，刪掉其中一張（entry 2）之後，訊息應該只少那一張的連結跟按鈕，其餘 4 張要還在。
         entries = [{"url": f"https://x.com/a/status/{i}", "author": "a", "type": "photo"} for i in range(1, 6)]

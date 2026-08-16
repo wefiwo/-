@@ -12,5 +12,7 @@ services:
         sync: false
       - key: DISCORD_APPLICATION_ID
         sync: false
+      - key: OWNER_DISCORD_ID
+        sync: false
       - key: COLLECT_SECRET
         generateValue: true

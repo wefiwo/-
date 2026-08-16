@@ -37,6 +37,11 @@ API_BASE = "https://discord.com/api/v10"
 BOT_TOKEN = os.environ["DISCORD_BOT_TOKEN"]
 VERIFY_KEY = VerifyKey(bytes.fromhex(os.environ["DISCORD_PUBLIC_KEY"]))
 COLLECT_SECRET = os.environ["COLLECT_SECRET"]
+# /抓圖刪除 是唯一一個不用帶 COLLECT_SECRET 就能改資料的路——User Install 讓任何在共用伺服器看過這個
+# App 被用過的人都能自己按「新增應用程式」裝上，裝完就能打指令，跟密鑰完全無關。沒有這道檢查的話，
+# 任何陌生人裝上就能刪光收藏庫任何一筆資料。空字串代表沒設定，直接擋掉所有人（安全預設值，寧可
+# 剛部署完自己也打不了、直到設定這個值，也不要有還沒設定就先開放給任何人刪的空窗期）。
+OWNER_DISCORD_ID = os.environ.get("OWNER_DISCORD_ID", "")
 # 選填：設了才會在 client 主動要求時（見 /collect 的 announce 欄位）主動推播新收藏——兩個都設的話
 # 同一則會兩邊都發，只設一個就只發那邊，都不設就整個跳過。bot 要先被邀進對應伺服器、在該頻道有發言
 # 權限——User Install 不夠，這個一定要真的邀進去才行。
@@ -202,6 +207,15 @@ def url_hash(url):
     # Discord 的 button custom_id 限 100 字，直接塞完整網址（尤其 FB 那種長網址）風險太大——用短
     # hash 代替，點擊時再回頭比對找出實際是哪一筆。
     return hashlib.sha1(url.encode()).hexdigest()[:12]
+
+
+def interaction_user_id(body):
+    # 有伺服器情境時使用者資訊在 member.user 底下，純 DM/群組 DM 情境（User Install 常見用法）則在
+    # 頂層 user——兩種都要接住，不能只認一種，不然某個情境下 OWNER_DISCORD_ID 檢查會誤判成「不是
+    # 擁有者」。
+    member = body.get("member") or {}
+    user = member.get("user") or body.get("user") or {}
+    return user.get("id", "")
 
 
 def delete_entry_by_hash(character, short_hash):
@@ -563,6 +577,10 @@ def interactions():
     if itype == 3:  # message component (button) clicked
         custom_id = body["data"]["custom_id"]
         if custom_id.startswith("del:"):
+            # 誰都看得到別人 /抓圖 回覆上的 🗑️ 按鈕（群組 DM、伺服器頻道都是），不是只有原本下指令
+            # 的人——沒有這道檢查的話，任何看得到那則訊息的人都能點掉別人選到的收藏。
+            if not OWNER_DISCORD_ID or interaction_user_id(body) != OWNER_DISCORD_ID:
+                return jsonify({"type": 4, "data": {"content": "這個按鈕只有機器人擁有者能用。", "flags": 64}})
             _, character, short_hash = custom_id.split(":", 2)
             _, remaining = delete_entry_by_hash(character, short_hash)
             # 找不到（這顆按鈕的那筆已經刪過了——常見於上一次點擊其實刪除成功了，只是那次的回應在
@@ -635,6 +653,12 @@ def interactions():
             return jsonify({"type": 4, "data": {"content": build_list_content(character, opts.get("類型"))}})
 
         if command_name == "抓圖刪除":
+            # User Install 讓任何在共用伺服器看過這個 App 被用過的人都能自己按「新增應用程式」裝上，
+            # 裝完就能打這個指令，跟 COLLECT_SECRET 完全無關——沒有這道檢查，任何陌生人裝上就能刪光
+            # 收藏庫任何一筆資料。OWNER_DISCORD_ID 沒設定的話直接擋掉所有人，不留還沒設定就先開放
+            # 給任何人刪的空窗期。
+            if not OWNER_DISCORD_ID or interaction_user_id(body) != OWNER_DISCORD_ID:
+                return jsonify({"type": 4, "data": {"content": "這個指令只有機器人擁有者能用。", "flags": 64}})
             target_url = (opts.get("網址") or "").strip()
             if not delete_entry(character, target_url):
                 # 跟 🗑️ 按鈕那邊（itype == 3）同一個成因：Render 免費方案偶爾要從休眠喚醒，喚醒中的
