@@ -39,7 +39,7 @@ from dotenv import load_dotenv
 load_dotenv()
 sys.stdout.reconfigure(line_buffering=True)  # 背景執行時 stdout 預設整批緩衝，這樣才能即時看到進度
 
-BACKEND_URL = "https://twitterlian-dong-dcshou-tu-bot.onrender.com"
+BACKEND_URL = "https://bobobobob.pythonanywhere.com"
 COLLECT_SECRET = os.environ["COLLECT_SECRET"]
 HASHTAGS_PATH = Path(__file__).parent / "hashtags.json"
 PROGRESS_PATH = Path(__file__).parent / "twitter_import_progress.json"
