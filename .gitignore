@@ -8,3 +8,5 @@ collected.json
 twitter_import_progress.json
 twitter_import.lock
 dead_link_check_progress.json
+dead_link_check.log
+run_dead_link_check.ps1
