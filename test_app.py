@@ -251,7 +251,7 @@ class TestCollect(unittest.TestCase):
         self.assertIn("4 個還是空的", content)
         self.assertIn("秧秧 - 2", content)
 
-    def test_build_stats_content_with_character_adds_count_and_rank(self):
+    def test_build_stats_content_with_one_character_shows_only_that_character(self):
         app_module.save_collected({
             "秧秧": [
                 {"url": "https://x.com/a/status/1", "author": "a", "type": "photo"},
@@ -259,9 +259,22 @@ class TestCollect(unittest.TestCase):
             ],
             "長離": [{"url": "https://x.com/b/status/3", "author": "b", "type": "photo"}],
         })
-        content = app_module.build_stats_content("長離")
+        content = app_module.build_stats_content(["長離"])
         self.assertIn("**長離**：📷 1 張、🎬 0 部，共 1 筆", content)
         self.assertIn("排名第 2／6 名", content)  # 6 = len(test HASHTAGS)，秧秧(2) 排第 1
+        # 填了角色就不該再混進整體統計那一大串——這是查特定角色，不是總覽。
+        self.assertNotIn("📊 全部收藏統計", content)
+        self.assertNotIn("收藏最多的前 10 個", content)
+
+    def test_build_stats_content_with_multiple_characters_shows_each(self):
+        app_module.save_collected({
+            "秧秧": [{"url": "https://x.com/a/status/1", "author": "a", "type": "photo"}],
+            "長離": [{"url": "https://x.com/b/status/2", "author": "b", "type": "photo"}],
+        })
+        content = app_module.build_stats_content(["秧秧", "長離"])
+        # 秧秧、長離都收藏 1 筆，同分時維持 hashtags.json 原本順序（秧秧在前）決定名次高低。
+        self.assertIn("**秧秧**：📷 1 張、🎬 0 部，共 1 筆，排名第 1／6 名", content)
+        self.assertIn("**長離**：📷 1 張、🎬 0 部，共 1 筆，排名第 2／6 名", content)
 
     def test_url_choices_filters_by_author_or_url_substring(self):
         app_module.save_collected({"秧秧": [

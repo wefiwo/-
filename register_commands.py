@@ -16,7 +16,7 @@ load_dotenv()
 API_BASE = "https://discord.com/api/v10"
 
 CHARACTER_OPTION = {"name": "角色", "description": "角色名稱", "type": 3, "required": True, "autocomplete": True}
-CHARACTER_OPTION_OPTIONAL = {**CHARACTER_OPTION, "required": False, "description": "只看這個角色的收藏數與排名（不填則顯示整體統計）"}
+CHARACTER_OPTION_OPTIONAL = {**CHARACTER_OPTION, "required": False, "description": "只看這幾個角色的收藏數與排名，可用逗號隔開查多個（不填則顯示整體統計）"}
 CHARACTER_OPTION_RANDOM = {**CHARACTER_OPTION, "required": False, "description": "角色名稱（留空則隨機挑一位角色）"}
 TYPE_CHOICES = [{"name": "圖片", "value": "圖片"}, {"name": "影片", "value": "影片"}]
 COMMON = {"integration_types": [1], "contexts": [0, 1, 2]}  # USER_INSTALL; guild/bot DM/group DM

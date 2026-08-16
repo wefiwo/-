@@ -369,9 +369,28 @@ def build_stats_html():
     return STATS_HTML_TEMPLATE.replace("__SUBTITLE__", subtitle).replace("__DATA_JSON__", data_json)
 
 
-def build_stats_content(character=None):
+def build_stats_content(characters=None):
     data = load_collected()
     counts = {name: len(data.get(name, [])) for name in HASHTAGS}
+
+    # 有填角色（一個或多個）就只顯示那幾個角色自己的數字，不要再混進整體統計——填了角色代表使用者
+    # 要查的是特定對象，前面那一大串全部角色的彙總反而是雜訊，跟 /抓圖統計 (no options) 那個總覽用途
+    # 分開處理。
+    if characters:
+        # 名次：全部角色依收藏數排序，同分維持 hashtags.json 原本順序（沒有特別去搶並列名次的意義）。
+        ranked = sorted(counts.items(), key=lambda kv: kv[1], reverse=True)
+        rank_of = {name: i for i, (name, _) in enumerate(ranked, 1)}
+        lines = []
+        for character in characters:
+            entries = data.get(character, [])
+            n_photo = sum(1 for e in entries if e.get("type") == "photo")
+            n_video = sum(1 for e in entries if e.get("type") == "video")
+            lines.append(
+                f"**{character}**：📷 {n_photo} 張、🎬 {n_video} 部，共 {counts[character]} 筆，"
+                f"排名第 {rank_of[character]}／{len(HASHTAGS)} 名"
+            )
+        return "\n".join(lines)
+
     with_entries = {name: n for name, n in counts.items() if n}
     total_photo = sum(sum(1 for e in v if e.get("type") == "photo") for v in data.values())
     total_video = sum(sum(1 for e in v if e.get("type") == "video") for v in data.values())
@@ -385,15 +404,6 @@ def build_stats_content(character=None):
     if top:
         lines.append("\n收藏最多的前 10 個：")
         lines += [f"{i}. {name} - {n}" for i, (name, n) in enumerate(top, 1)]
-
-    if character:
-        entries = data.get(character, [])
-        n_photo = sum(1 for e in entries if e.get("type") == "photo")
-        n_video = sum(1 for e in entries if e.get("type") == "video")
-        # 名次：全部角色依收藏數排序，同分維持 hashtags.json 原本順序（沒有特別去搶並列名次的意義）。
-        ranked = sorted(counts.items(), key=lambda kv: kv[1], reverse=True)
-        rank = next(i for i, (name, _) in enumerate(ranked, 1) if name == character)
-        lines.append(f"\n**{character}**：📷 {n_photo} 張、🎬 {n_video} 部，共 {counts[character]} 筆，排名第 {rank}／{len(HASHTAGS)} 名")
     return "\n".join(lines)
 
 
@@ -595,13 +605,18 @@ def interactions():
         opts = {o["name"]: o["value"] for o in body["data"].get("options", [])}
 
         if command_name == "抓圖統計":
-            stat_character = opts.get("角色", "")
-            if stat_character and stat_character not in HASHTAGS:
+            # 一個欄位輸入多位角色，用常見的分隔符號（半形/全形逗號、頓號、空白）切開——這樣才能一次
+            # 查好幾個角色，不用一個一個重打指令。代價是自動完成只對「目前這一段」有效，加了分隔符號
+            # 之後後面的名字沒有 autocomplete 輔助，屬於可接受的取捨，沒有另外做。
+            raw = (opts.get("角色") or "").strip()
+            stat_characters = [n for n in re.split(r"[,，、\s]+", raw) if n] if raw else []
+            unknown = [n for n in stat_characters if n not in HASHTAGS]
+            if unknown:
                 return jsonify({
                     "type": 4,
-                    "data": {"content": f"找不到「{stat_character}」的 Hashtag，請先在 hashtags.json 新增。", "flags": 64},
+                    "data": {"content": f"找不到「{'、'.join(unknown)}」的 Hashtag，請先在 hashtags.json 新增。", "flags": 64},
                 })
-            return jsonify({"type": 4, "data": {"content": build_stats_content(stat_character or None)}})
+            return jsonify({"type": 4, "data": {"content": build_stats_content(stat_characters or None)}})
 
         if command_name == "抓圖":
             # 唯一一個「角色」選填的指令——留空就從有符合條件收藏的角色裡隨機選一個，跟其他指令共用
