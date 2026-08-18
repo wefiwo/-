@@ -22,7 +22,9 @@
 // 流程——先讓你實際操作、把 log() 印出來的內容回報，再照實際文字調整：
 //   - 讚按鈕的文字/描述（「讚」「已按讚」之類）、分享選單裡「複製連結」的
 //     文字，都是用常見繁中/英文猜的，不保證跟你 X App 顯示的字一樣。
-//   - 「分享按鈕跟讚按鈕在同一排」這個畫面結構也是猜的。
+//   - 分享按鈕改成「讚按鈕同一排工具列（留言/轉發/讚/收藏/分享）裡最右邊
+//     那顆可點擊元件」來定位，不再用文字比對找分享按鈕——實測發現用「分享」
+//     這個字去找，畫面上不只一處符合，會抓錯，改抓位置比較準。
 //   - 內文（caption）目前是把整個畫面看得到的文字全部串起來，很粗糙。
 //   - 只做 X。IG/FB 原生 App 畫面結構、選單文字都不同，等 X 這條路先
 //     跑通、抓到實際除錯方法後再比照擴充。
@@ -87,31 +89,46 @@ function watchLikes() {
 }
 
 function handleNewLike(likeBtn) {
-  // 分享按鈕通常跟讚按鈕擠在同一排工具列（同一個父層容器）裡，往上找
-  // 幾層父層，在裡面找分享按鈕。抓不到就是這個結構猜錯，回報 log。
-  var shareBtn = null;
-  var node = likeBtn.parent();
-  for (var hops = 0; hops < 4 && node && !shareBtn; hops++) {
-    shareBtn = node.findOne(descMatches(/^(分享|Share)$/));
-    node = node.parent();
-  }
+  var shareBtn = findShareButtonNearLike(likeBtn);
   if (!shareBtn) {
-    toastLog("按讚偵測到了，但找不到同排的分享按鈕，回報目前畫面 log");
+    toastLog("按讚偵測到了，但找不到同排最右邊的分享按鈕，回報目前畫面 log");
     logVisibleDescs();
     return;
   }
   runShareFlow(shareBtn, "剛剛按讚的貼文");
 }
 
-// 手動備用按鈕：畫面上隨便找一個分享按鈕（適合你人工點開單篇貼文詳細頁再按）。
+// 手動備用按鈕：畫面上隨便找一個讚按鈕，用同一套「同排最右邊」邏輯定位分享鍵
+// （適合你人工點開單篇貼文詳細頁再按）。
 function collectFromShareFlow() {
-  var shareBtn = descContains("分享").findOne(2000) || descContains("Share").findOne(2000);
+  var likeBtn = descMatches(/^(讚|Like|已按讚|取消讚|Liked|Unlike)$/).findOne(2000);
+  if (!likeBtn) {
+    toastLog("畫面上找不到讚按鈕，回報目前畫面 log");
+    logVisibleDescs();
+    return;
+  }
+  var shareBtn = findShareButtonNearLike(likeBtn);
   if (!shareBtn) {
-    toastLog("找不到分享按鈕，回報目前畫面 log");
+    toastLog("找不到同排最右邊的分享按鈕，回報目前畫面 log");
     logVisibleDescs();
     return;
   }
   runShareFlow(shareBtn, "目前畫面的貼文");
+}
+
+// 分享按鈕不是靠文字找（畫面上不只一個地方帶有「分享」相關文字，之前抓錯過），
+// 改成：讚按鈕跟分享按鈕擠在同一排工具列（留言/轉發/讚/收藏/分享），往上找
+// 幾層父層，找到那一排之後，直接取「最右邊」那個可點擊的元件當分享鍵。
+function findShareButtonNearLike(likeBtn) {
+  var node = likeBtn.parent();
+  for (var hops = 0; hops < 4 && node; hops++) {
+    var children = (node.children() || []).filter(function (c) { return c.clickable(); });
+    if (children.length > 1) {
+      return children[children.length - 1];
+    }
+    node = node.parent();
+  }
+  return null;
 }
 
 // 共用：點分享 → 複製連結 → 讀剪貼簿 → 跳出確認對話框 → 送出。
