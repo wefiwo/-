@@ -33,12 +33,16 @@
 //     更精準的做法（原生 App 沒有 URL 這種穩定 ID 可以拿來認貼文）。
 // ============================================================
 
-"ui";
+// 注意：不要在檔案開頭加 "ui";——加了會讓這支腳本自己佔用一個空白 Activity，
+// 之後點 AutoJs6 App 圖示會點到那個空白畫面而不是 AutoJs6 真正的主介面，
+// 而且這支腳本用不到 ui 佈局模式（浮動視窗/對話框都不需要它）。
 
 // ---- 設定：改成你自己的值 ----
 var BACKEND_URL = "https://BoboboboB.pythonanywhere.com/collect";
 var COLLECT_SECRET = "填入你 .env 裡 COLLECT_SECRET 的值";
 var POLL_MS = 700;
+
+console.show(); // 自動浮出主控台視窗，不用再自己去「任務」分頁找 log
 
 auto.waitFor(); // 沒開無障礙服務會先跳出授權畫面，開完才會繼續往下跑
 
