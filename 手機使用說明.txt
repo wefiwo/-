@@ -1,0 +1,96 @@
+手機使用說明（讓 X / FB / IG 在手機上也能被抓圖BOT收集）
+==================================================
+
+抓圖BOT本體不會主動爬蟲，收集全靠 likewatcher.user.js 這支瀏覽器腳本，在你按讚/發文時
+把貼文丟回後端。手機上的限制：Tampermonkey 這類「userscript 管理器」只能裝在瀏覽器裡，
+X/Instagram/Facebook 的原生 App 完全沒有這種擴充機制，塞不進去。
+
+以下兩條路，照麻煩程度排序，看你要哪一種：
+
+
+路線一：Android 版 Firefox + Tampermonkey（零成本、零設定，唯一缺點是要改用瀏覽器）
+--------------------------------------------------------------
+
+1. 手機上安裝「Firefox for Android」（Google Play 直接搜）。
+2. 在 Firefox 裡裝 Tampermonkey 附加元件（設定 → 附加元件 → 搜尋 Tampermonkey）。
+3. 用這個 Firefox 開 likewatcher.user.js 的原始碼網址（GitHub raw 連結），Tampermonkey 會
+   跳出安裝畫面，跟電腦上安裝的流程完全一樣。
+4. 第一次執行時會跳出 prompt 要你貼 BACKEND_URL 跟 COLLECT_SECRET，跟電腦版一樣填。
+5. 之後改用這個 Firefox 開 x.com / instagram.com / facebook.com 網頁版逛，按讚會跟電腦上
+   一樣自動收集。
+
+限制：只能用瀏覽器版網站，不能用手機原生的 X / FB / IG App 本身按讚。
+
+
+路線二：原生 App 的「分享」功能 → HTTP Shortcuts App → 直接打 /collect
+--------------------------------------------------------------
+
+適合想直接在 X / FB / IG 原生 App 裡用「分享」按鈕收集的情況。不用寫 App、不用上架，
+用一個免費、免登入的通用工具「HTTP Shortcuts」（Google Play 搜尋 "HTTP Shortcuts"，
+作者 Waboodoo）幫你組一個能被叫出來的「分享目標」。
+
+跟電腦上的 userscript 比，原生 App 的分享功能只給得出貼文網址（頂多加一小段文字），
+抓不到完整內文、抓不到媒體類型、抓不到作者帳號——這幾個要你自己手動選/打一次，
+是這條路線的已知限制，不是設定錯了。
+
+【前置準備】
+- 打開專案裡的 .env 檔，複製 COLLECT_SECRET 的值，等一下要填進去。
+- 後端網址：https://BoboboboB.pythonanywhere.com
+
+【建立 Shortcut】
+1. 安裝「HTTP Shortcuts」App，開啟後點右下角 + 新增一個 Shortcut。
+2. 基本設定：
+   - 方法：POST
+   - URL：https://BoboboboB.pythonanywhere.com/collect
+3. 進「請求內文/參數」畫面，請求內文類型選「自訂文字」：
+   - 內容類型欄位填：application/json
+   - 請求內文欄位打 JSON 骨架，游標移到要插變數的位置點右下角 {} 圖示，
+     沒有變數時可以直接在那裡建立新變數：
+     {
+       "url": "{shared_url}",
+       "type": "{media_type}",
+       "text": "#{character}",
+       "author": "{author}"
+     }
+   四個變數的「名稱」欄只能填英數字底線（character／media_type／author／shared_url），
+   中文說明填在「對話方塊標題」欄。
+   - character（角色，文字輸入）：JSON 編碼打勾，其餘不用勾。對話方塊文字可寫「跟
+     hashtags.json / 角色關鍵字對照表.txt 裡的名字完全一樣，例如 鳴潮」。
+   - author（作者，文字輸入）：JSON 編碼打勾，其餘不用勾。對話方塊文字可寫「只有
+     Instagram 貼文、FB 的 reel/photo/group 連結才需要填，X 貼文和 FB 一般貼文
+     （網址是 /使用者/posts/ 或 /videos/）留空即可」。
+   - media_type（類型，多重選擇選取）：選項設 photo、video 兩個。
+   - shared_url（網址，文字輸入）：「允許從分享對話方塊接收數值」打勾——這格勾了之後，
+     這個 Shortcut 才會出現在 Android 的分享選單裡，把 X/FB/IG App 分享出來的內容接進來；
+     JSON 編碼也打勾。
+4. Headers（標頭）不用再另外加 Content-Type，上一步「內容類型」欄已經設定過；只要加：
+   - X-Collect-Secret: （貼上 .env 裡 COLLECT_SECRET 的值）
+5. 分享進來的內容有時是一整句話夾網址（例如「快看這個 https://x.com/xxx/status/123 」），
+   不是乾淨的網址。到「程式碼」分頁的「執行前」加一段挑出網址——變數要用
+   getVariable/setVariable 讀寫，不能直接當一般 JS 變數用；這個 App 的程式碼欄位對正規
+   表示式裡的跳脫斜線剖析有問題（實測會報 JavaScript 錯誤），改用純字串方法找：
+     var url = getVariable("shared_url");
+     var i = url.indexOf("http");
+     if (i >= 0) {
+       url = url.substring(i);
+       var stops = [" ", "\n", "\t"];
+       var end = url.length;
+       for (var j = 0; j < stops.length; j++) {
+         var p = url.indexOf(stops[j]);
+         if (p >= 0 && p < end) end = p;
+       }
+       setVariable("shared_url", url.substring(0, end));
+     }
+
+【使用方式】
+在 X / Facebook / Instagram 原生 App 裡，點貼文的「分享」按鈕 → 選「抓圖收藏」（或你取的
+Shortcut 名字）→ 依提示輸入角色名稱、選 photo/video、需要的話填作者 → 送出。跟電腦上
+按讚自動收集的差別只在於：這裡角色跟類型要自己選，不是自動判斷。
+
+
+兩條路線怎麼選
+--------------------------------------------------------------
+- 只是想手機也能收集、不在意用瀏覽器版網站 → 路線一，設定完全部自動，跟電腦體驗一樣。
+- 一定要用原生 App 的分享鍵 → 路線二，每次要多按幾下選角色/類型，換取能留在原生 App 裡用。
+
+兩條都不衝突，可以都裝，看當下手邊開的是瀏覽器還是 App 決定用哪個。
