@@ -49,21 +49,57 @@ console.hide();
 auto.waitFor(); // 沒開無障礙服務會先跳出授權畫面，開完才會繼續往下跑
 
 // 手動按鈕當備用觸發：自動偵測失敗時，人工點目前畫面上「最後一個看到的貼文」。
-// 縮小、放右下角，不擋在讚/分享那排正中間；長按可切換主控台顯示/隱藏。
+// 縮小、初始放右下角附近，不擋在讚/分享那排正中間。
+// 用 left|top 當基準座標系（setPosition 的 x/y 就是螢幕絕對座標，拖曳算距離比較單純）。
 var window = floaty.window(
-  <frame gravity="right|bottom">
+  <frame gravity="left|top">
     <button id="collect" text="抓" w="36" h="36" textSize="10sp" style="Widget.AppCompat.Button.Colored"/>
   </frame>
 );
-window.setPosition(-10, -120);
-window.collect.click(function () {
-  threads.start(function () { collectFromShareFlow(); });
-});
+window.setPosition(device.width - 60, device.height - 220);
+
+// 自己接管觸控事件，同時支援三種手勢：
+//   按住不放拖曳 → 移動按鈕位置
+//   短按放開（沒移動）→ 觸發手動收集
+//   長按不放（沒移動、超過 LONG_PRESS_MS）→ 切換主控台顯示/隱藏
+// 一旦自己接管 setOnTouchListener，button 原生的 click/長按事件就不會再觸發了，
+// 三種行為都要在這裡自己判斷。
+var DRAG_THRESHOLD = 15; // px，超過這個位移量才算拖曳，不然手抖一下就誤觸拖曳
+var LONG_PRESS_MS = 500;
 var consoleVisible = false;
-window.collect.setOnLongClickListener(function () {
-  if (consoleVisible) { console.hide(); } else { console.show(); }
-  consoleVisible = !consoleVisible;
-  return true;
+var touchStartX, touchStartY, winStartX, winStartY, touchStartTime, dragged;
+
+window.collect.setOnTouchListener(function (view, event) {
+  switch (event.getAction()) {
+    case event.ACTION_DOWN:
+      touchStartX = event.getRawX();
+      touchStartY = event.getRawY();
+      winStartX = window.getX();
+      winStartY = window.getY();
+      touchStartTime = new Date().getTime();
+      dragged = false;
+      return true;
+    case event.ACTION_MOVE:
+      var dx = event.getRawX() - touchStartX;
+      var dy = event.getRawY() - touchStartY;
+      if (dragged || Math.abs(dx) > DRAG_THRESHOLD || Math.abs(dy) > DRAG_THRESHOLD) {
+        dragged = true;
+        window.setPosition(winStartX + dx, winStartY + dy);
+      }
+      return true;
+    case event.ACTION_UP:
+      if (dragged) {
+        return true; // 拖完放開，不當成點擊
+      }
+      if (new Date().getTime() - touchStartTime >= LONG_PRESS_MS) {
+        if (consoleVisible) { console.hide(); } else { console.show(); }
+        consoleVisible = !consoleVisible;
+      } else {
+        threads.start(function () { collectFromShareFlow(); });
+      }
+      return true;
+  }
+  return false;
 });
 
 // ---- 背景自動偵測按讚 ----
