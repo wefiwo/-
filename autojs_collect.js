@@ -13,8 +13,10 @@
 //
 // 運作方式：背景每 700ms 掃一次目前螢幕上的讚按鈕狀態，跟上一次掃到的
 // 狀態比對——如果某個讚按鈕從「未按」變成「已按」，就當作剛剛按讚，自動
-// 觸發：找同一排的分享按鈕 → 點分享 → 點複製連結 → 讀剪貼簿拿網址 → 跳出
-// 對話框讓你打角色名稱/選類型 → 送到 /collect。
+// 觸發：找同一排的分享按鈕 → 點分享 → 點複製連結 → 讀剪貼簿拿網址 → 選
+// photo/video → 把抓到的畫面文字直接送給後端比對 hashtags.json（跟
+// likewatcher.user.js 同一套邏輯，後端自己判斷角色）。比對到角色就全自動
+// 結束；比對不到才跳出對話框讓你手動補打角色名稱重送一次。
 //
 // 已知限制／這是「先射箭再畫靶」的第一版，跟以前調 IG/FB 網頁版是同一套
 // 流程——先讓你實際操作、把 log() 印出來的內容回報，再照實際文字調整：
@@ -140,21 +142,48 @@ function runShareFlow(shareBtn, hint) {
     .filter(Boolean).join(" / ");
   log("畫面文字（抓內文用，供你對照調整）：\n" + caption);
 
-  var character = dialogs.rawInput("角色名稱（" + hint + "）", "");
-  if (!character) { toastLog("已取消"); return; }
   var typeIndex = dialogs.select("類型", ["photo", "video"]);
   if (typeIndex === -1) { toastLog("已取消"); return; }
   var mediaType = typeIndex === 0 ? "photo" : "video";
 
+  // 先把抓到的畫面文字整包當 text 送出，跟瀏覽器版 likewatcher.user.js 一樣，
+  // 交給後端自己比對 hashtags.json——比對得到的話全自動，不用手動打角色。
+  var result = submitCollect(url, mediaType, caption);
+  if (result.addedTo.length > 0) {
+    toastLog("自動比對成功，已加入：" + result.addedTo.join("、"));
+    return;
+  }
+
+  // 畫面文字沒比對到任何角色，才手動補打一次。
+  toastLog("畫面文字沒比對到角色，手動輸入");
+  var character = dialogs.rawInput("角色名稱（" + hint + "）", "");
+  if (!character) { toastLog("已取消"); return; }
+  var result2 = submitCollect(url, mediaType, "#" + character);
+  if (result2.addedTo.length > 0) {
+    toastLog("已加入：" + result2.addedTo.join("、"));
+  } else {
+    toastLog("還是沒比對到，狀態碼 " + result2.statusCode + "，回報 log 對一下 hashtags.json 裡的名字");
+  }
+}
+
+// 送出 /collect，回傳狀態碼跟後端實際比對到的角色清單（added_to）。
+function submitCollect(url, mediaType, text) {
   var res = http.postJson(BACKEND_URL, {
     url: url,
     type: mediaType,
-    text: "#" + character,
+    text: text,
   }, {
     headers: { "X-Collect-Secret": COLLECT_SECRET },
   });
-  toastLog("送出結果，狀態碼：" + res.statusCode);
-  log(res.statusCode + " " + res.body.string());
+  var bodyText = res.body.string();
+  log(res.statusCode + " " + bodyText);
+  var addedTo = [];
+  try {
+    addedTo = JSON.parse(bodyText).added_to || [];
+  } catch (e) {
+    log("回應不是合法 JSON：" + e);
+  }
+  return { statusCode: res.statusCode, addedTo: addedTo };
 }
 
 function logVisibleDescs() {
