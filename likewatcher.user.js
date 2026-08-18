@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         抓圖 Bot - X/IG/FB 按讚自動蒐集
 // @namespace    ponytail
-// @version      5.3
+// @version      5.4
 // @description  在 X、Instagram 或 Facebook 按讚符合角色 Hashtag 的貼文時，自動送去自己的 Discord 機器人後端收藏；X 上轉推則彈出輸入框手動指定角色；Alt+Q/Alt+W 快捷鍵切換本機開關
 // @match        https://x.com/*
 // @match        https://twitter.com/*
@@ -253,11 +253,14 @@
 
     // 作者的頭像＋姓名連結通常連續出現兩次指向同一個人；跟 IG 用同一招分辨作者跟留言者/推薦帳號。
     // 社團裡的個人連結長得不一樣（/groups/{社團}/user/{id}/，不是平常的 /{帳號}/），兩種都認。
+    // Reels 疊加介面裡實測撈到的是 /profile.php?id={數字}（舊式數字 ID 連結，不是好記帳號名），
+    // 之前完全沒認得這個形狀，被當成一般 /{帳號}/ 解析成 "profile.php" 這個字串，又剛好在
+    // RESERVED_PATHS 裡，整個候選人就直接被濾掉——查不到帳號的根源在這裡，不是重複判斷失靈。
     function extractAuthor(container) {
       const candidates = [...container.querySelectorAll('a[href^="/"], a[href^="https://www.facebook.com/"]')]
-        .map((a) => a.getAttribute("href")?.match(/^(?:https:\/\/(?:www\.)?facebook\.com)?\/(?:groups\/[A-Za-z0-9_.]{1,50}\/user\/([A-Za-z0-9.]{1,50})|([A-Za-z0-9.]{5,50}))(?:\/|\?|$)/))
-        .filter((m) => m && !RESERVED_PATHS.has((m[1] || m[2]).toLowerCase()))
-        .map((m) => m[1] || m[2]);
+        .map((a) => a.getAttribute("href")?.match(/^(?:https:\/\/(?:www\.)?facebook\.com)?\/(?:groups\/[A-Za-z0-9_.]{1,50}\/user\/([A-Za-z0-9.]{1,50})|profile\.php\?id=(\d+)|([A-Za-z0-9.]{5,50}))(?:\/|\?|&|$)/))
+        .filter((m) => m && !RESERVED_PATHS.has((m[1] || m[3] || "").toLowerCase()))
+        .map((m) => m[1] || m[2] || m[3]);
       return firstDuplicateAdjacent(candidates);
     }
 
