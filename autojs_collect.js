@@ -42,19 +42,28 @@ var BACKEND_URL = "https://BoboboboB.pythonanywhere.com/collect";
 var COLLECT_SECRET = "填入你 .env 裡 COLLECT_SECRET 的值";
 var POLL_MS = 700;
 
-console.show(); // 自動浮出主控台視窗，不用再自己去「任務」分頁找 log
+// 主控台預設隱藏，不會擋畫面——長按下面那顆懸浮按鈕可以隨時切換顯示/隱藏，
+// 平常靠 toastLog() 的小提示就夠了，隱不隱藏都不影響腳本邏輯（log 照樣有記錄）。
+console.hide();
 
 auto.waitFor(); // 沒開無障礙服務會先跳出授權畫面，開完才會繼續往下跑
 
 // 手動按鈕當備用觸發：自動偵測失敗時，人工點目前畫面上「最後一個看到的貼文」。
+// 縮小、放右下角，不擋在讚/分享那排正中間；長按可切換主控台顯示/隱藏。
 var window = floaty.window(
-  <frame gravity="right|center_vertical">
-    <button id="collect" text="抓" w="70" h="70" style="Widget.AppCompat.Button.Colored"/>
+  <frame gravity="right|bottom">
+    <button id="collect" text="抓" w="36" h="36" textSize="10sp" style="Widget.AppCompat.Button.Colored"/>
   </frame>
 );
-window.setPosition(-10, 400);
+window.setPosition(-10, -120);
 window.collect.click(function () {
   threads.start(function () { collectFromShareFlow(); });
+});
+var consoleVisible = false;
+window.collect.setOnLongClickListener(function () {
+  if (consoleVisible) { console.hide(); } else { console.show(); }
+  consoleVisible = !consoleVisible;
+  return true;
 });
 
 // ---- 背景自動偵測按讚 ----
@@ -136,6 +145,8 @@ function findShareButtonNearLike(likeBtn) {
 }
 
 // 共用：點分享 → 複製連結 → 讀剪貼簿 → 跳出確認對話框 → 送出。
+// 主控台預設就是隱藏的（見檔案開頭 console.hide()），這裡不用特別處理顯示/
+// 隱藏——想看過程 log 就長按浮動按鈕切換，不想看就讓它一直藏著。
 function runShareFlow(shareBtn, hint) {
   shareBtn.click();
   sleep(1000);
