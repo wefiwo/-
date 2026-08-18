@@ -56,7 +56,10 @@ var window = floaty.window(
     <button id="collect" text="抓" w="36" h="36" textSize="10sp" style="Widget.AppCompat.Button.Colored"/>
   </frame>
 );
-window.setPosition(device.width - 60, device.height - 220);
+// 用螢幕比例定位，不用「device.width - 固定像素」——按鈕大小是 dp、
+// device.width 是實際像素，兩種單位沒對齊，之前算出來的位置把按鈕推到
+// 螢幕外面去了（幾乎點不到）。比例算法不管螢幕密度多少都不會跑出邊界。
+window.setPosition(device.width * 0.82, device.height * 0.75);
 
 // 自己接管觸控事件，同時支援三種手勢：
 //   按住不放拖曳 → 移動按鈕位置
