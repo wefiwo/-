@@ -95,7 +95,14 @@ window.collect.setOnTouchListener(function (view, event) {
         if (consoleVisible) { console.hide(); } else { console.show(); }
         consoleVisible = !consoleVisible;
       } else {
-        threads.start(function () { collectFromShareFlow(); });
+        threads.start(function () {
+          try {
+            collectFromShareFlow();
+          } catch (e) {
+            log("collectFromShareFlow 發生錯誤：" + e);
+            toastLog("收集流程出錯：" + e);
+          }
+        });
       }
       return true;
   }
@@ -113,6 +120,7 @@ threads.start(function () {
       }
     } catch (e) {
       log("watchLikes 發生錯誤：" + e);
+      toastLog("背景偵測出錯：" + e); // 主控台預設藏著，出錯一定要有 toast 才看得到
     }
     sleep(POLL_MS);
   }
