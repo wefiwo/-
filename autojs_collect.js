@@ -124,8 +124,7 @@ function runShareFlow(shareBtn, hint) {
   if (!copyLink) {
     toastLog("分享選單裡找不到「複製連結」，回報目前畫面 log");
     logVisibleDescs();
-    back();
-    return;
+    return; // 不自動按返回——之前這裡呼叫 back() 會把 X 整個導覽堆疊退出 App，不是只關分享選單
   }
   copyLink.click();
   sleep(500);
