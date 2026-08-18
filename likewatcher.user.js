@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         抓圖 Bot - X/IG/FB 按讚自動蒐集
 // @namespace    ponytail
-// @version      5.2
+// @version      5.3
 // @description  在 X、Instagram 或 Facebook 按讚符合角色 Hashtag 的貼文時，自動送去自己的 Discord 機器人後端收藏；X 上轉推則彈出輸入框手動指定角色；Alt+Q/Alt+W 快捷鍵切換本機開關
 // @match        https://x.com/*
 // @match        https://twitter.com/*
@@ -132,7 +132,8 @@
   // 的規則保持一致；X/IG 維持原本「文字裡出現就算」。這裡只影響要不要送出前的本地判斷跟 log，真正
   // 擋下來的是後端 /collect 自己重比對一次那關。
   function matchedCharacters(text, tags, requireHash) {
-    const lower = text.toLowerCase();
+    // 中文輸入法常把 # 自動轉全形「＃」，肉眼看是 hashtag，程式比對卻對不上半形 #，先正規化掉。
+    const lower = text.replace(/＃/g, "#").toLowerCase();
     return Object.entries(tags)
       .filter(([name]) => !name.startsWith("_"))
       .filter(([, list]) => list.some((h) => {
@@ -200,10 +201,15 @@
     // 一致，免得抓到了卻被 /collect 退回。
     // 不只單純的讚——長按/點開表情選單直接點大心、哈等其他反應一樣算數。
     const REACTION_LABELS = ["讚", "Like", "大心", "Love", "哈", "Haha", "哇", "Wow", "難過", "Sad", "怒", "Angry", "關心", "Care"];
+    // ponytail: 這份清單只能一個個補，Reels 沉浸式介面找不到貼文連結時 extractAuthor 得掃整個
+    // document（見下面 urlMatch 分支），連帶把頁面上其他導覽列連結也掃進來，撞到新的沒列進來的
+    // 導覽字（例如「friends」就是這樣被抓成假作者才補上的）幾乎是遲早的事。真要根治要能把作者
+    // 搜尋範圍縮小到真正的影片播放器容器，但那要有人能看著真實 DOM 才敢下手，目前只能且戰且走。
     const RESERVED_PATHS = new Set([
       "photo", "photos", "videos", "posts", "reel", "reels", "watch", "groups", "marketplace",
       "gaming", "live", "events", "pages", "people", "hashtag", "help", "settings", "profile.php",
       "permalink.php", "story.php", "stories", "login", "home.php", "messages", "notifications",
+      "friends", "menu", "bookmarks", "requests", "explore", "gaming.php", "ads",
     ]);
     const POST_LINK_RE = /^https:\/\/(?:www\.|m\.)?facebook\.com\/(?:([A-Za-z0-9.]{5,50})\/(posts|videos)\/([A-Za-z0-9]+)|reel\/(\d+)|photo\/?\?fbid=(\d+)|groups\/([A-Za-z0-9_.]{1,50})\/(posts|permalink)\/([A-Za-z0-9]+))/;
     // FB 現在很多 Reels/影片貼文的「複製連結」給的是這種不透光短連結，網址本身看不出帳號也看不出
@@ -268,6 +274,24 @@
       setTimeout(() => cb(container.innerText || ""), 300);
     }
 
+    // Reels 沉浸式播放介面的內文，實測跟 IG Reels 一樣讀不到（container.innerText 是空的）——
+    // 螢幕上看得到不代表 DOM 摸得到。跟 resolveShareLink 同一招：fetch 貼文自己的網址，讀
+    // og:description，不靠畫面。
+    function fetchCaption(url, cb) {
+      fetch(url, { credentials: "include" })
+        .then((r) => r.text())
+        .then((html) => {
+          const descM = html.match(/<meta property="og:description" content="([^"]*)"/);
+          const ta = document.createElement("textarea");
+          ta.innerHTML = descM ? descM[1] : "";
+          cb(ta.value);
+        })
+        .catch((e) => {
+          console.error("[抓圖收藏][FB] fetch 內文失敗", e);
+          cb("");
+        });
+    }
+
     function handleMatch(m, container) {
       let url, author;
       if (m[1]) {
@@ -286,7 +310,10 @@
       if (!author) return console.log("[抓圖收藏][FB] 抓不到帳號，略過（選擇器可能要調整）");
 
       const mediaType = /\/(?:reel|videos)\//.test(url) || container.querySelector("video") ? "video" : "photo";
-      readCaption(container, (text) => {
+      // container 是 document 代表這則是靠網址列信任的 Reels（見上面 urlMatch），DOM 讀不到內文，
+      // 要改用 fetchCaption；一般貼文的容器範圍夠小、DOM 讀得到，維持原本 readCaption 比較快。
+      const getCaption = container === document ? (cb) => fetchCaption(url, cb) : (cb) => readCaption(container, cb);
+      getCaption((text) => {
         console.log("[抓圖收藏][FB] 偵測到讚", { url, author, mediaType, textPreview: text.slice(0, 30) });
         loadHashtags((tags) => {
           const chars = matchedCharacters(text, tags, true); // FB 一定要帶 # 才算數

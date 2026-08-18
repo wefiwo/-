@@ -126,7 +126,9 @@ HASHTAGS_BOPOMOFO = build_bopomofo_table(HASHTAGS)
 def matched_characters(text, hashtags, require_hash=False):
     # /collect 對 X/IG 貼文用寬鬆比對（關鍵字在文字裡出現就算），FB 則要求關鍵字必須以 #keyword
     # 的形式出現（見 app.py 頂端註解／CLAUDE.md 說明，plain-text 提到角色名字在 FB 上太常見）。
-    lower = text.lower()
+    # 中文輸入法常把 # 自動轉全形「＃」，肉眼看是 hashtag，程式比對卻對不上半形 #，先正規化掉
+    # （likewatcher.user.js 的 matchedCharacters 鏡子版也要做一樣的正規化，見那邊註解）。
+    lower = text.replace("＃", "#").lower()
     if require_hash:
         raw = {name: [t for t in tags if f"#{t.lower().lstrip('#')}" in lower] for name, tags in hashtags.items()}
     else:

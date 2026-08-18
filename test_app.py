@@ -92,6 +92,11 @@ class TestCollect(unittest.TestCase):
         self.assertEqual(app_module.matched_characters("聊到心這個角色", hashtags, require_hash=True), [])
         self.assertEqual(app_module.matched_characters("看 #心 的圖", hashtags, require_hash=True), ["心"])
 
+    def test_matched_characters_treats_fullwidth_hash_as_ascii_hash(self):
+        # 中文輸入法常把 # 自動轉成全形「＃」，肉眼看是同一個 hashtag，比對不能因此漏掉。
+        hashtags = {"心": ["心"]}
+        self.assertEqual(app_module.matched_characters("看 ＃心 的圖", hashtags, require_hash=True), ["心"])
+
     def test_delete_entry_removes_matching_url(self):
         app_module.save_collected({"秧秧": [{"url": "https://x.com/a/status/1", "author": "a", "type": "photo"}]})
         self.assertTrue(app_module.delete_entry("秧秧", "https://x.com/a/status/1"))
