@@ -206,19 +206,39 @@
       "permalink.php", "story.php", "stories", "login", "home.php", "messages", "notifications",
     ]);
     const POST_LINK_RE = /^https:\/\/(?:www\.|m\.)?facebook\.com\/(?:([A-Za-z0-9.]{5,50})\/(posts|videos)\/([A-Za-z0-9]+)|reel\/(\d+)|photo\/?\?fbid=(\d+)|groups\/([A-Za-z0-9_.]{1,50})\/(posts|permalink)\/([A-Za-z0-9]+))/;
+    // FB 現在很多 Reels/影片貼文的「複製連結」給的是這種不透光短連結，網址本身看不出帳號也看不出
+    // 數字 ID，POST_LINK_RE 對不上——只能先記下來，等一下 fetch 它自己的頁面解出真正網址（見
+    // resolveShareLink）。
+    const SHARE_LINK_RE = /^https:\/\/(?:www\.)?facebook\.com\/share\/[a-z]+\/([A-Za-z0-9_-]+)\/?/;
 
     // 同一則貼文的縮圖（photo/?fbid=）常常比貼文本身的永久連結（帶帳號的 posts/videos）離讚按鈕更
     // 近，先找到的容器很容易只包到縮圖、包不到貼文標頭——優先選帶帳號的連結（m[1]），因為它同時給得
-    // 出作者、也是唯一保證讀得到完整內文的形狀；沒有的話才退而求其次用 reel/photo/group 這些。
+    // 出作者、也是唯一保證讀得到完整內文的形狀；沒有的話才退而求其次用 reel/photo/group 這些，
+    // 都沒有才退到不透光短連結（回傳 {shareUrl}，呼叫端要另外 fetch 解析）。
     function findPostLink(root) {
-      let fallback = null;
+      let fallback = null, shareUrl = null;
       for (const a of root.querySelectorAll("a[href]")) {
         const m = a.href.match(POST_LINK_RE);
-        if (!m) continue;
-        if (m[1]) return m;
-        if (!fallback) fallback = m;
+        if (m) {
+          if (m[1]) return m;
+          if (!fallback) fallback = m;
+          continue;
+        }
+        if (!shareUrl && SHARE_LINK_RE.test(a.href)) shareUrl = a.href;
       }
-      return fallback;
+      return fallback || (shareUrl ? { shareUrl } : null);
+    }
+
+    // 跟 IG Reels 讀不到 closed shadow DOM 內文同一招：fetch 短連結自己的頁面，讀 og:url 解出
+    // 背後真正的貼文網址，再拿那個網址重新跑一次 POST_LINK_RE。
+    function resolveShareLink(shareUrl, cb) {
+      fetch(shareUrl, { credentials: "include" })
+        .then((r) => r.text())
+        .then((html) => cb(html.match(/<meta property="og:url" content="([^"]*)"/)?.[1] || null))
+        .catch((e) => {
+          console.error("[抓圖收藏][FB] 解析分享短連結失敗", e);
+          cb(null);
+        });
     }
 
     function findPostContainer(el) {
@@ -248,6 +268,34 @@
       setTimeout(() => cb(container.innerText || ""), 300);
     }
 
+    function handleMatch(m, container) {
+      let url, author;
+      if (m[1]) {
+        url = `https://www.facebook.com/${m[1]}/${m[2]}/${m[3]}`;
+        author = m[1];
+      } else if (m[4]) {
+        url = `https://www.facebook.com/reel/${m[4]}`;
+        author = extractAuthor(container);
+      } else if (m[5]) {
+        url = `https://www.facebook.com/photo/?fbid=${m[5]}`;
+        author = extractAuthor(container);
+      } else {
+        url = `https://www.facebook.com/groups/${m[6]}/${m[7]}/${m[8]}`;
+        author = extractAuthor(container);
+      }
+      if (!author) return console.log("[抓圖收藏][FB] 抓不到帳號，略過（選擇器可能要調整）");
+
+      const mediaType = /\/(?:reel|videos)\//.test(url) || container.querySelector("video") ? "video" : "photo";
+      readCaption(container, (text) => {
+        console.log("[抓圖收藏][FB] 偵測到讚", { url, author, mediaType, textPreview: text.slice(0, 30) });
+        loadHashtags((tags) => {
+          const chars = matchedCharacters(text, tags, true); // FB 一定要帶 # 才算數
+          if (chars.length === 0) return console.log("[抓圖收藏][FB] 沒對到任何角色關鍵字（要帶 #），略過", text);
+          submitCollect("[抓圖收藏][FB]", { url, author, text, mediaType, chars });
+        });
+      });
+    }
+
     document.addEventListener(
       "click",
       (ev) => {
@@ -263,31 +311,14 @@
         const m = container && findPostLink(container);
         if (!m) return console.log("[抓圖收藏][FB] 找不到貼文連結，略過（選擇器可能要調整，也可能是按到留言的讚）");
 
-        let url, author;
-        if (m[1]) {
-          url = `https://www.facebook.com/${m[1]}/${m[2]}/${m[3]}`;
-          author = m[1];
-        } else if (m[4]) {
-          url = `https://www.facebook.com/reel/${m[4]}`;
-          author = extractAuthor(container);
-        } else if (m[5]) {
-          url = `https://www.facebook.com/photo/?fbid=${m[5]}`;
-          author = extractAuthor(container);
-        } else {
-          url = `https://www.facebook.com/groups/${m[6]}/${m[7]}/${m[8]}`;
-          author = extractAuthor(container);
-        }
-        if (!author) return console.log("[抓圖收藏][FB] 抓不到帳號，略過（選擇器可能要調整）");
-
-        const mediaType = /\/(?:reel|videos)\//.test(url) || container.querySelector("video") ? "video" : "photo";
-        readCaption(container, (text) => {
-          console.log("[抓圖收藏][FB] 偵測到讚", { url, author, mediaType, textPreview: text.slice(0, 30) });
-          loadHashtags((tags) => {
-            const chars = matchedCharacters(text, tags, true); // FB 一定要帶 # 才算數
-            if (chars.length === 0) return console.log("[抓圖收藏][FB] 沒對到任何角色關鍵字（要帶 #），略過", text);
-            submitCollect("[抓圖收藏][FB]", { url, author, text, mediaType, chars });
+        if (m.shareUrl) {
+          return resolveShareLink(m.shareUrl, (resolvedUrl) => {
+            const rm = resolvedUrl && resolvedUrl.match(POST_LINK_RE);
+            if (!rm) return console.log("[抓圖收藏][FB] 分享短連結解析失敗或解出來的網址仍不符規則，略過", m.shareUrl, resolvedUrl);
+            handleMatch(rm, container);
           });
-        });
+        }
+        handleMatch(m, container);
       },
       true
     );
