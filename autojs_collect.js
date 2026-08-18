@@ -147,8 +147,10 @@ function runShareFlow(shareBtn, hint) {
     logVisibleDescs();
     return; // 不自動按返回——之前這裡呼叫 back() 會把 X 整個導覽堆疊退出 App，不是只關分享選單
   }
-  copyLink.click();
-  sleep(500);
+  // 找到的常常是文字標籤本身、不是真正可點擊的那層（點了沒反應，剪貼簿不會更新）
+  // ——往上找到第一個 clickable() 的節點再點。
+  clickNodeOrClickableAncestor(copyLink);
+  sleep(800); // 給複製動作跟選單關閉一點時間，之前 500ms 讀到的是舊剪貼簿內容
 
   var url = getClip();
   log("抓到網址：" + url);
@@ -204,6 +206,21 @@ function submitCollect(url, mediaType, text) {
     log("回應不是合法 JSON：" + e);
   }
   return { statusCode: res.statusCode, addedTo: addedTo };
+}
+
+// 有些選單項目找到的是文字標籤節點本身，不可點擊，要往上找第一個
+// clickable() 的父層來點，不然點了沒反應。
+function clickNodeOrClickableAncestor(node) {
+  var n = node;
+  for (var hops = 0; hops < 5 && n; hops++) {
+    if (n.clickable()) {
+      n.click();
+      return true;
+    }
+    n = n.parent();
+  }
+  node.click(); // 保底：都沒找到 clickable 的話至少試著點原本那個節點
+  return false;
 }
 
 function logVisibleDescs() {
