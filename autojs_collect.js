@@ -74,11 +74,11 @@ threads.start(function () {
 });
 
 function isLikedDesc(desc) {
-  return /已按讚|取消讚|Liked|Unlike/.test(desc || "");
+  return /已按讚|取消讚|已喜歡|取消喜歡|Liked|Unlike/.test(desc || "");
 }
 
 function watchLikes() {
-  var buttons = descMatches(/^(讚|Like|已按讚|取消讚|Liked|Unlike)$/).find();
+  var buttons = descMatches(/^(讚|Like|已按讚|取消讚|喜歡|已喜歡|取消喜歡|Liked|Unlike)$/).find();
   buttons.forEach(function (btn) {
     var key = btn.bounds().toShortString();
     var state = btn.desc();
@@ -105,7 +105,7 @@ function handleNewLike(likeBtn) {
 // 手動備用按鈕：畫面上隨便找一個讚按鈕，用同一套「同排最右邊」邏輯定位分享鍵
 // （適合你人工點開單篇貼文詳細頁再按）。
 function collectFromShareFlow() {
-  var likeBtn = descMatches(/^(讚|Like|已按讚|取消讚|Liked|Unlike)$/).findOne(2000);
+  var likeBtn = descMatches(/^(讚|Like|已按讚|取消讚|喜歡|已喜歡|取消喜歡|Liked|Unlike)$/).findOne(2000);
   if (!likeBtn) {
     toastLog("畫面上找不到讚按鈕，回報目前畫面 log");
     logVisibleDescs();
