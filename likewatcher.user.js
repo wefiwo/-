@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         抓圖 Bot - X/IG/FB 按讚自動蒐集
 // @namespace    ponytail
-// @version      5.1
+// @version      5.2
 // @description  在 X、Instagram 或 Facebook 按讚符合角色 Hashtag 的貼文時，自動送去自己的 Discord 機器人後端收藏；X 上轉推則彈出輸入框手動指定角色；Alt+Q/Alt+W 快捷鍵切換本機開關
 // @match        https://x.com/*
 // @match        https://twitter.com/*
@@ -307,8 +307,12 @@
         // FB 實際用的字不一樣，選對真正的反應按鈕之前這行印出來的內容就是唯一的線索。
         if (!REACTION_LABELS.includes(label)) return console.log("[抓圖收藏][FB] 點到帶 aria-label 的東西但不是讚/表情反應，略過：", label);
 
-        const container = findPostContainer(ev.target);
-        const m = container && findPostLink(container);
+        // Reels 直式滑動介面跟 IG Reels 一樣：滑到哪一部影片，網址列本身就會跟著換成那部影片的
+        // 永久連結（pushState，不整頁刷新）——這種情況下網址列比爬 DOM 準，reel 的數字 ID 又沒有
+        // IG shortcode 那種要另外過濾頁尾連結的問題，符合規則就直接信任。
+        const urlMatch = location.href.match(POST_LINK_RE);
+        const container = urlMatch ? document : findPostContainer(ev.target);
+        const m = container && (urlMatch || findPostLink(container));
         if (!m) return console.log("[抓圖收藏][FB] 找不到貼文連結，略過（選擇器可能要調整，也可能是按到留言的讚）");
 
         if (m.shareUrl) {
