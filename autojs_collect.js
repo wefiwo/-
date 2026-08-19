@@ -154,6 +154,15 @@
 //   貼文——下界直接用讚按鈕自己的上緣，工具列那排（含工具列本身、下面的
 //   統計列、以及再更下面的下一則貼文）一律不看，只看「大頭貼到工具列
 //   之間」這一段。
+//
+// v3.5 更新：v3.4 把 bounds 下界收緊到工具列上緣之後，extractCaption()/
+//   tweetIdentity() 裡「爬容器節點拿 contentDescription 當加分項、跟 bounds
+//   交叉驗證」那段邏輯就變成陪襯了——容器爬出來的範圍幾乎必定比收緊後的
+//   bounds 寬（通常整個包含工具列、統計列），交叉驗證的吻合檢查因此幾乎
+//   永遠不會過，等於每 0.5 秒、每顆讚按鈕都白白爬一次容器樹卻沒用上結果。
+//   整段拿掉，連同只有這兩個呼叫端在用的 findTweetContainer()/
+//   countAvatarsInside() 一起刪除——現在完全靠 findTweetBounds() 決定範圍，
+//   不再有任何「爬父節點層數猜邊界」的路徑殘留在程式碼裡。
 // ============================================================
 
 // 注意：不要在檔案開頭加 "ui";——加了會讓這支腳本自己佔用一個空白 Activity，
@@ -410,24 +419,19 @@ function stripVolatileStats(s) {
 }
 
 // 這則貼文的「內容身分」，取代原本用螢幕座標當 likedSeen 的 key——螢幕
-// 座標會被 RecyclerView 回收、不同貼文重複使用，內容不會。優先用容器節點
-// 自己的 contentDescription（同樣要跟 findTweetBounds() 算出來的範圍交叉
-// 驗證，見 extractCaption() 的說明），抓不到/信不過才退回「這則貼文垂直
-// 範圍內」的 TextView 拼接文字——用 findTweetBounds() 當權威範圍，兩條
-// 路徑都不會混進鄰篇內容。兩條路徑都先過 stripVolatileStats() 濾掉統計
-// 數字。理論上這則貼文自己一定會有一些文字（至少作者名），真的完全抓不到
-// 才回傳 null，呼叫端會直接跳過這顆按鈕、留到下一輪輪詢再試。
+// 座標會被 RecyclerView 回收、不同貼文重複使用，內容不會。直接拿「這則
+// 貼文垂直範圍內」（findTweetBounds()）的 TextView 拼接文字，過
+// stripVolatileStats() 濾掉統計數字。
+//
+// 原本這裡會先試著爬容器節點拿 contentDescription 當「加分項」，但
+// findTweetBounds() 的下界改成卡在工具列上緣之後（v3.4），容器爬出來的
+// 範圍幾乎必定比這個更寬（通常整個包含工具列、統計列），交叉驗證的吻合
+// 檢查因此幾乎永遠不會過——等於每 0.5 秒、每顆讚按鈕都白白爬一次容器樹
+// 卻沒用上結果。拿掉這段純浪費效能的嘗試，直接用 bounds 過濾。理論上這則
+// 貼文自己一定會有一些文字（至少作者名），真的完全抓不到才回傳 null，
+// 呼叫端會直接跳過這顆按鈕、留到下一輪輪詢再試。
 function tweetIdentity(btn) {
   var bounds = findTweetBounds(btn);
-  var container = findTweetContainer(btn);
-  if (container) {
-    var desc = container.desc();
-    var cb = container.bounds();
-    var fitsBounds = cb && cb.top >= bounds.top - 20 && cb.bottom <= bounds.bottom + 20;
-    if (desc && desc.length > 5 && fitsBounds) {
-      return "d:" + stripVolatileStats(desc);
-    }
-  }
   var texts = className("android.widget.TextView").find()
     .filter(function (n) { return nodeInBounds(n, bounds); })
     .map(function (n) { return n.text(); })
@@ -540,48 +544,11 @@ function findShareButtonNearLike(likeBtn) {
 
 // 判斷一顆 ImageView 是不是「大頭貼尺寸」——正方形、夠大，門檻要夠高
 // 才不會把工具列裡留言/轉發/讚/收藏/分享這些正方形小圖示（通常 18~24dp，
-// 換算成 px 也遠小於大頭貼常見的 40dp+）也算進去。這個門檻同時給
-// countAvatarsInside()（容器邊界的其中一個訊號）跟 findAvatarNodes()
-// （下面「兩則貼文之間的範圍」用的地標）共用，兩處各寫一份門檻數字之前
-// 就出過因為門檻不一致而各自誤判的教訓。
+// 換算成 px 也遠小於大頭貼常見的 40dp+）也算進去。給 findAvatarNodes()
+// （下面「兩則貼文之間的範圍」用的地標）用。
 function isAvatarSized(b) {
   var w = b.width(), h = b.height();
   return w > 80 && Math.abs(w - h) < 15;
-}
-
-// 滑動時螢幕上常同時有兩篇貼文，抓內文如果掃整個畫面會把鄰篇的 hashtag 也
-// 混進來，導致比對到錯的角色。原本只看「這層範圍內出現不只一個讚按鈕」
-// 一個訊號，實測會一次爬過頭、跨進兩三篇貼文都沒觸發（X 的畫面結構每爬
-// 一層父層涵蓋的範圍常常不是線性放大，可能一口氣就跳過中間該停的那層）。
-// 改成「讚按鈕數量」跟「大頭貼數量」兩個訊號任一個先偵測到「這層不只一篇
-// 貼文」就停，且把爬升上限從 10 收緊到 6——就算兩個訊號都沒觸發，最壞情況
-// 混進來的內容範圍也比較小。
-function countAvatarsInside(node) {
-  var images = node.find(className("android.widget.ImageView"));
-  var count = 0;
-  images.forEach(function (img) {
-    if (isAvatarSized(img.bounds())) count++;
-  });
-  return count;
-}
-
-// findTweetContainer 只用來取得容器節點自己的 contentDescription 這個
-// 「加分項」（見 extractCaption()/tweetIdentity()）——真正決定「這則貼文
-// 的範圍到哪裡」的權威來源是下面的 findTweetBounds()，靠爬父節點層數猜
-// 邊界這件事，v2~v3 這幾輪已經證明不管訊號怎麼調都會有邊界誤判的殘留
-// 風險，改用畫面上真實的垂直位置（見下方說明）取代它當「唯一真相」。
-function findTweetContainer(likeBtn) {
-  var node = likeBtn.parent();
-  var candidate = node;
-  for (var hops = 0; hops < 6 && node; hops++) {
-    var likeButtonsInside = node.find(descMatches(LIKE_BUTTON_PATTERN));
-    if (likeButtonsInside.length > 1 || countAvatarsInside(node) > 1) {
-      break; // 這層已經跨到不只一篇貼文，用上一層（candidate）就好
-    }
-    candidate = node;
-    node = node.parent();
-  }
-  return candidate;
 }
 
 // 兩則貼文之間那條分隔線，很可能是 RecyclerView 用 ItemDecoration 直接
@@ -624,25 +591,16 @@ function nodeInBounds(node, bounds) {
   return centerY >= bounds.top && centerY < bounds.bottom;
 }
 
-// 內文抓取：優先看容器節點自己有沒有現成的 contentDescription——X 為了
-// 螢幕報讀，通常會在貼文卡片整體那層節點放一段完整描述（作者、內文、
-// 統計數字全部串好），比自己爬子節點拼湊準得多，也不會漏抓因捲動被裁切、
-// 需要另外展開的內容。但只有在容器節點自己的範圍跟 findTweetBounds()
-// 算出來的「這則貼文真正的垂直範圍」差不多吻合時才信任它——容器節點是
-// 爬父節點爬出來的，範圍還是有可能跟真實邊界對不上，這裡拿獨立算出來的
-// bounds 交叉驗證一次，對不上就不要用。讀不到/信不過（太短，或跟 bounds
-// 差太多）才退回：只抓「這則貼文垂直範圍內」的 TextView 文字串起來——不
-// 管節點在容器樹裡爬到第幾層，直接用畫面上的實際位置篩選，真正做到只看
-// 上下兩則貼文之間的內容，不會混進鄰篇。
-function extractCaption(container, bounds) {
-  if (container) {
-    var ownDesc = container.desc();
-    var cb = container.bounds();
-    var fitsBounds = cb && cb.top >= bounds.top - 20 && cb.bottom <= bounds.bottom + 20;
-    if (ownDesc && ownDesc.length > 15 && fitsBounds) {
-      return ownDesc;
-    }
-  }
+// 內文抓取：只抓「這則貼文垂直範圍內」（findTweetBounds()）的 TextView
+// 文字串起來——不管節點在容器樹裡爬到第幾層，直接用畫面上的實際位置
+// 篩選，真正做到只看上下兩則貼文之間的內容，不會混進鄰篇。
+//
+// 原本這裡會先試著爬容器節點拿 contentDescription（比自己拼湊 TextView
+// 準、也不會漏抓因捲動被裁切的內容），但跟 tweetIdentity() 一樣的理由
+// （見那邊的說明）：findTweetBounds() 的下界卡在工具列上緣之後，容器爬
+// 出來的範圍幾乎必定比這個寬，交叉驗證幾乎永遠不會過，拿掉這段純浪費
+// 效能的嘗試。
+function extractCaption(bounds) {
   return className("android.widget.TextView").find()
     .filter(function (n) { return nodeInBounds(n, bounds); })
     .map(function (n) { return n.text(); })
@@ -698,8 +656,7 @@ function runShareFlow(likeBtn, shareBtn, hint) {
   }
 
   var bounds = findTweetBounds(likeBtn);
-  var container = findTweetContainer(likeBtn);
-  var caption = extractCaption(container, bounds);
+  var caption = extractCaption(bounds);
   log("畫面文字（抓內文用，供你對照調整）：\n" + caption);
   var mediaType = detectMediaType(bounds);
   log("媒體類型自動判斷：" + (mediaType || "判斷不出來，等一下跳對話框讓你選"));
