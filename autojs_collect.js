@@ -192,14 +192,18 @@ function isLikedDesc(desc) {
 // 實心愛心切換的語意屬性，不受文字翻譯影響），旗標讀不到時才退回文字比對
 // 當備援——這也是之前「讚」vs「喜歡」翻譯不一致會漏判的根本解法。
 function isLiked(btn, desc) {
+  var checkedState = false;
   try {
     if (typeof btn.checked === "function") {
-      return btn.checked();
+      checkedState = btn.checked();
     }
   } catch (e) {
-    // 有些節點沒有 checked 這個屬性，例外就退回文字比對
+    // 有些節點沒有 checked 這個屬性，忽略即可，靠下面的文字比對
   }
-  return isLikedDesc(desc);
+  // 兩個都檢查、任一個判斷是「已按讚」就算數——之前只信 checked()、
+  // checked() 存在但永遠回傳 false 的話會蓋掉本來就有效的文字比對，
+  // 導致整個偵測完全沒反應（實測就是這樣壞掉的）。
+  return checkedState || isLikedDesc(desc);
 }
 
 // point 有給的話（觸控事件觸發時）只處理「觸控點落在按鈕範圍內」的那顆，
