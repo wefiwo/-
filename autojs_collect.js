@@ -185,6 +185,9 @@ try {
   toastLog("觸控事件監聽設定失敗，改用純輪詢：" + e);
 }
 
+// 讚按鈕的文字/描述模式，全檔共用同一份，不要各處各寫一次猜測的文字。
+var LIKE_BUTTON_PATTERN = /^(讚|Like|已按讚|取消讚|喜歡|已喜歡|取消喜歡|Liked|Unlike)$/;
+
 function isLikedDesc(desc) {
   return /已按讚|取消讚|已喜歡|取消喜歡|Liked|Unlike/.test(desc || "");
 }
@@ -219,7 +222,7 @@ var watchLock = threads.lock();
 function watchLikes(point) {
   watchLock.lock();
   try {
-    var buttons = descMatches(/^(讚|Like|已按讚|取消讚|喜歡|已喜歡|取消喜歡|Liked|Unlike)$/).find();
+    var buttons = descMatches(LIKE_BUTTON_PATTERN).find();
     buttons.forEach(function (btn) {
       if (point && !boundsContainsPoint(btn.bounds(), point)) {
         return;
@@ -257,7 +260,7 @@ function handleNewLike(likeBtn) {
 // 手動備用按鈕：畫面上隨便找一個讚按鈕，用同一套「同排最右邊」邏輯定位分享鍵
 // （適合你人工點開單篇貼文詳細頁再按）。
 function collectFromShareFlow() {
-  var likeBtn = descMatches(/^(讚|Like|已按讚|取消讚|喜歡|已喜歡|取消喜歡|Liked|Unlike)$/).findOne(2000);
+  var likeBtn = descMatches(LIKE_BUTTON_PATTERN).findOne(2000);
   if (!likeBtn) {
     toastLog("畫面上找不到讚按鈕，回報目前畫面 log");
     logVisibleDescs();
@@ -288,16 +291,17 @@ function findShareButtonNearLike(likeBtn) {
 }
 
 // 滑動時螢幕上常同時有兩篇貼文，抓內文如果掃整個畫面會把鄰篇的 hashtag 也
-// 混進來，導致比對到錯的角色。從按鈕往上找貼文卡片本身：一直往上爬，
-// 只要那層的高度還沒逼近整個螢幕高度，就當作還在同一張卡片內，繼續往上找
-// 更完整的範圍；一旦某層高度已經接近整個螢幕（代表爬到整個列表容器、
-// 已經涵蓋不只一篇貼文了），就停在「上一層」，不要用這層。
+// 混進來，導致比對到錯的角色。原本用「高度是否接近整個螢幕」當邊界，實測
+// 會爬過頭、抓到下一篇貼文的內容——改成更準的判斷：一篇貼文正常只會有
+// 一個讚按鈕，往上爬的時候只要這層範圍內出現「不只一個讚按鈕」，就代表
+// 已經跨到別篇貼文了，停在上一層（還只有一個讚按鈕那層）。
 function findTweetContainer(anchorBtn) {
   var node = anchorBtn.parent();
   var candidate = node;
   for (var hops = 0; hops < 10 && node; hops++) {
-    if (node.bounds().height > device.height * 0.75) {
-      break;
+    var likeButtonsInside = node.find(descMatches(LIKE_BUTTON_PATTERN));
+    if (likeButtonsInside.length > 1) {
+      break; // 這層已經跨到不只一篇貼文，用上一層（candidate）就好
     }
     candidate = node;
     node = node.parent();
