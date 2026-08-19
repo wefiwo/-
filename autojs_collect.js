@@ -207,24 +207,36 @@ function isLiked(btn, desc) {
   return checkedState || isLikedDesc(desc);
 }
 
+// 觸控事件（每次點擊各自開一條執行緒）跟備援輪詢是兩條獨立背景執行緒，
+// 很可能同時間都在檢查同一顆讚按鈕，兩邊互相不知道對方的存在，容易對
+// 同一次按讚各自觸發一次收集流程，疊在一起就變成看起來停不下來、
+// 一直跳分享/複製連結/角色輸入。用一把鎖把「檢查+觸發」這段包起來，
+// 同一時間只有一條執行緒能跑這段，其他的排隊等，不會重複觸發。
+var watchLock = threads.lock();
+
 // point 有給的話（觸控事件觸發時）只處理「觸控點落在按鈕範圍內」的那顆，
 // 不用檢查畫面上其他讚按鈕；point 是 null 時（備援輪詢）維持全部檢查。
 function watchLikes(point) {
-  var buttons = descMatches(/^(讚|Like|已按讚|取消讚|喜歡|已喜歡|取消喜歡|Liked|Unlike)$/).find();
-  buttons.forEach(function (btn) {
-    if (point && !boundsContainsPoint(btn.bounds(), point)) {
-      return;
-    }
-    var key = btn.bounds().toShortString();
-    var desc = btn.desc();
-    var wasLiked = !!likedSeen[key];
-    var nowLiked = isLiked(btn, desc);
-    likedSeen[key] = nowLiked;
-    if (!wasLiked && nowLiked) {
-      log("偵測到新的按讚，座標 " + key + "（checked=" + (typeof btn.checked === "function" ? btn.checked() : "n/a") + "）");
-      handleNewLike(btn);
-    }
-  });
+  watchLock.lock();
+  try {
+    var buttons = descMatches(/^(讚|Like|已按讚|取消讚|喜歡|已喜歡|取消喜歡|Liked|Unlike)$/).find();
+    buttons.forEach(function (btn) {
+      if (point && !boundsContainsPoint(btn.bounds(), point)) {
+        return;
+      }
+      var key = btn.bounds().toShortString();
+      var desc = btn.desc();
+      var wasLiked = !!likedSeen[key];
+      var nowLiked = isLiked(btn, desc);
+      likedSeen[key] = nowLiked;
+      if (!wasLiked && nowLiked) {
+        log("偵測到新的按讚，座標 " + key + "（checked=" + (typeof btn.checked === "function" ? btn.checked() : "n/a") + "）");
+        handleNewLike(btn);
+      }
+    });
+  } finally {
+    watchLock.unlock();
+  }
 }
 
 // 不確定 Rect 物件是否有現成的 contains() 方法可用，自己手動比較邊界比較保險。
