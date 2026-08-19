@@ -480,6 +480,17 @@ function detectMediaType(container) {
 // 主控台預設就是隱藏的（見檔案開頭 console.hide()），這裡不用特別處理顯示/
 // 隱藏——想看過程 log 就長按浮動按鈕切換，不想看就讓它一直藏著。
 function runShareFlow(likeBtn, shareBtn, hint) {
+  // BACKEND_URL/COLLECT_SECRET 沒設定好的話（第一次執行的輸入框被取消、
+  // 或送出時是空字串——這兩種情況都不會存進 storages，見 getBackendUrl()/
+  // getSecret()），不要先把整段點分享/複製連結/跳對話框都跑完才在最後
+  // submitCollect() 打 http.postJson 時才炸掉——實測炸出來的是
+  // "Invalid URL host: \"\"" 這種看不懂在講什麼的例外，而且備援輪詢每
+  // 3 秒就會對同一顆按鈕重複炸一次。一開始就先擋掉，不執行任何畫面操作。
+  if (!BACKEND_URL || !COLLECT_SECRET) {
+    toastLog("尚未設定後端網址/密鑰，點「設定」按鈕填一下再試");
+    return;
+  }
+
   var container = findTweetContainer(likeBtn);
   var caption = extractCaption(container);
   log("畫面文字（抓內文用，供你對照調整）：\n" + caption);
