@@ -132,6 +132,20 @@
 //   身分之後，容器一旦窄到沒有文字，tweetIdentity() 就直接回傳 null、
 //   永遠不會被追蹤，這才把問題暴露出來。門檻收緊到 80px，各種螢幕密度下
 //   都遠大於一般工具列圖示，但仍在合理大頭貼尺寸範圍內。
+//
+// v3.3 更新：v3.2 那個門檻修正之後，findTweetContainer() 靠爬父節點層數
+//   猜邊界這個做法本身還是有殘留風險——v2~v3.2 這幾輪的教訓是，不管拿
+//   「讚按鈕數量」還是「大頭貼數量」當停止訊號，門檻/邏輯調得再準，終究
+//   是在猜「爬幾層才對」，不是真的知道這則貼文的範圍在哪裡。改成用「兩則
+//   貼文之間那條分隔線」的概念——但分隔線本身很可能是畫在畫布上、不是
+//   真正的無障礙節點，直接找線本身不可靠，改用「大頭貼的垂直位置」當
+//   替身：每則貼文開頭一定有自己的大頭貼，大頭貼跟大頭貼之間的垂直區間
+//   就是這則貼文的真正範圍（findTweetBounds()）。extractCaption()/
+//   detectMediaType()/tweetIdentity() 現在都改成「只看這個垂直範圍內」的
+//   節點，不管容器爬到第幾層——findTweetContainer() 還留著，但只用來
+//   取得容器節點的 contentDescription 當「加分項」，而且要跟 bounds 交叉
+//   驗證吻合才會採用，不吻合就退回 bounds 過濾的做法，不會再單靠爬層數
+//   決定邊界。
 // ============================================================
 
 // 注意：不要在檔案開頭加 "ui";——加了會讓這支腳本自己佔用一個空白 Activity，
@@ -389,18 +403,25 @@ function stripVolatileStats(s) {
 
 // 這則貼文的「內容身分」，取代原本用螢幕座標當 likedSeen 的 key——螢幕
 // 座標會被 RecyclerView 回收、不同貼文重複使用，內容不會。優先用容器節點
-// 自己的 contentDescription（findTweetContainer()/extractCaption() 已經
-// 在用的同一份東西，這裡再呼叫一次省得另外傳遞，多一點點運算量換來身分
-// 跟座標完全無關，值得）；抓不到才退回拼接文字，一樣是內容而不是座標，
-// 只是不像 contentDescription 那麼精確。兩條路徑都先過 stripVolatileStats()
-// 濾掉統計數字。真的完全抓不到內容（理論上不該發生）就回傳 null，呼叫端
-// 會直接跳過這顆按鈕、留到下一輪輪詢再試，不會因為算不出身分就誤觸發。
+// 自己的 contentDescription（同樣要跟 findTweetBounds() 算出來的範圍交叉
+// 驗證，見 extractCaption() 的說明），抓不到/信不過才退回「這則貼文垂直
+// 範圍內」的 TextView 拼接文字——用 findTweetBounds() 當權威範圍，兩條
+// 路徑都不會混進鄰篇內容。兩條路徑都先過 stripVolatileStats() 濾掉統計
+// 數字。理論上這則貼文自己一定會有一些文字（至少作者名），真的完全抓不到
+// 才回傳 null，呼叫端會直接跳過這顆按鈕、留到下一輪輪詢再試。
 function tweetIdentity(btn) {
+  var bounds = findTweetBounds(btn);
   var container = findTweetContainer(btn);
-  if (!container) return null;
-  var desc = container.desc();
-  if (desc && desc.length > 5) return "d:" + stripVolatileStats(desc);
-  var texts = container.find(className("android.widget.TextView"))
+  if (container) {
+    var desc = container.desc();
+    var cb = container.bounds();
+    var fitsBounds = cb && cb.top >= bounds.top - 20 && cb.bottom <= bounds.bottom + 20;
+    if (desc && desc.length > 5 && fitsBounds) {
+      return "d:" + stripVolatileStats(desc);
+    }
+  }
+  var texts = className("android.widget.TextView").find()
+    .filter(function (n) { return nodeInBounds(n, bounds); })
     .map(function (n) { return n.text(); })
     .filter(Boolean)
     .join("|");
@@ -509,6 +530,17 @@ function findShareButtonNearLike(likeBtn) {
   return null;
 }
 
+// 判斷一顆 ImageView 是不是「大頭貼尺寸」——正方形、夠大，門檻要夠高
+// 才不會把工具列裡留言/轉發/讚/收藏/分享這些正方形小圖示（通常 18~24dp，
+// 換算成 px 也遠小於大頭貼常見的 40dp+）也算進去。這個門檻同時給
+// countAvatarsInside()（容器邊界的其中一個訊號）跟 findAvatarNodes()
+// （下面「兩則貼文之間的範圍」用的地標）共用，兩處各寫一份門檻數字之前
+// 就出過因為門檻不一致而各自誤判的教訓。
+function isAvatarSized(b) {
+  var w = b.width(), h = b.height();
+  return w > 80 && Math.abs(w - h) < 15;
+}
+
 // 滑動時螢幕上常同時有兩篇貼文，抓內文如果掃整個畫面會把鄰篇的 hashtag 也
 // 混進來，導致比對到錯的角色。原本只看「這層範圍內出現不只一個讚按鈕」
 // 一個訊號，實測會一次爬過頭、跨進兩三篇貼文都沒觸發（X 的畫面結構每爬
@@ -520,24 +552,16 @@ function countAvatarsInside(node) {
   var images = node.find(className("android.widget.ImageView"));
   var count = 0;
   images.forEach(function (img) {
-    var b = img.bounds();
-    var w = b.width(), h = b.height();
-    // 大頭貼是正方形圖示，但門檻一定要夠大——原本 w > 20 這個門檻太寬鬆，
-    // 連工具列裡留言/轉發/讚/收藏/分享這些正方形小圖示（通常 18~24dp，
-    // 換算成 px 也遠小於大頭貼常見的 40dp+）都會被算進來。實測證實這樣
-    // 會導致從讚按鈕往上爬的第一層（工具列本身）就先觸發「這層不只一篇
-    // 貼文」的誤判——因為單一則貼文的工具列本身就有好幾顆差不多大小的
-    // 方形圖示——findTweetContainer() 直接停在最外層還沒真正往上爬，
-    // 抓到的容器窄到連內文文字都沒包進去，tweetIdentity() 因此永遠算不出
-    // 身分（回報「跳針」重複印診斷 log 的成因）。收緊到 80px（各種螢幕
-    // 密度下都遠大於一般工具列圖示，但仍在合理大頭貼尺寸範圍內）。
-    if (w > 80 && Math.abs(w - h) < 15) {
-      count++;
-    }
+    if (isAvatarSized(img.bounds())) count++;
   });
   return count;
 }
 
+// findTweetContainer 只用來取得容器節點自己的 contentDescription 這個
+// 「加分項」（見 extractCaption()/tweetIdentity()）——真正決定「這則貼文
+// 的範圍到哪裡」的權威來源是下面的 findTweetBounds()，靠爬父節點層數猜
+// 邊界這件事，v2~v3 這幾輪已經證明不管訊號怎麼調都會有邊界誤判的殘留
+// 風險，改用畫面上真實的垂直位置（見下方說明）取代它當「唯一真相」。
 function findTweetContainer(likeBtn) {
   var node = likeBtn.parent();
   var candidate = node;
@@ -552,20 +576,65 @@ function findTweetContainer(likeBtn) {
   return candidate;
 }
 
+// 兩則貼文之間那條分隔線，很可能是 RecyclerView 用 ItemDecoration 直接
+// 畫在畫布上、不是真正的無障礙節點——無障礙服務讀不到畫布上直接畫的東西，
+// 沒辦法直接去找那條線本身。改用「大頭貼」的垂直位置當替身：每則貼文
+// 開頭一定有一顆自己的大頭貼，大頭貼跟大頭貼之間的垂直區間，實際上就是
+// 「上下兩則貼文之間」的範圍，效果等同於用分隔線抓範圍，但用的是保證
+// 找得到的真實節點。
+function findAvatarNodes() {
+  return className("android.widget.ImageView").find().filter(function (img) {
+    return isAvatarSized(img.bounds());
+  });
+}
+
+// 這則貼文的垂直範圍：讚按鈕所在 Y 座標，往上找最近的一顆大頭貼（這則
+// 貼文自己的）當上界，往下找最近的一顆大頭貼（下一則貼文的）當下界。
+// 找不到上面的大頭貼（這則貼文剛好在畫面最上面，大頭貼被捲出螢幕外）就
+// 用 0 當上界；找不到下面的（這則貼文是畫面上最後一則）就用螢幕高度當
+// 下界——寧可稍微抓寬一點點（畫面邊緣本來就沒有下一則貼文的內容可以
+// 混進來），也不要抓錯範圍。
+function findTweetBounds(likeBtn) {
+  var likeY = (likeBtn.bounds().top + likeBtn.bounds().bottom) / 2;
+  var top = 0, bottom = device.height;
+  findAvatarNodes().forEach(function (img) {
+    var ay = img.bounds().top;
+    if (ay <= likeY && ay > top) top = ay;
+    if (ay > likeY && ay < bottom) bottom = ay;
+  });
+  return { top: top, bottom: bottom };
+}
+
+// 節點的垂直中心點有沒有落在這則貼文自己的範圍內——不管容器節點往上爬
+// 爬到哪一層，直接用畫面上的實際位置篩選，真正做到「只看上下兩則貼文
+// 之間的內容」。
+function nodeInBounds(node, bounds) {
+  var b = node.bounds();
+  var centerY = (b.top + b.bottom) / 2;
+  return centerY >= bounds.top && centerY < bounds.bottom;
+}
+
 // 內文抓取：優先看容器節點自己有沒有現成的 contentDescription——X 為了
 // 螢幕報讀，通常會在貼文卡片整體那層節點放一段完整描述（作者、內文、
-// 統計數字全部串好），範圍天生就卡在單篇貼文，比自己爬子節點拼湊準得多，
-// 也不會漏抓因捲動被裁切、需要另外展開的內容。讀不到（沒設定/太短，
-// 太短代表可能抓到的是別的無關節點而不是整篇卡片）才退回舊做法：把容器
-// 內所有 TextView 文字串起來——這個退路仍然可能混進邊界誤判的內容，只是
-// findTweetContainer 已經盡量把邊界收緊了。
-function extractCaption(container) {
-  if (!container) return "";
-  var ownDesc = container.desc();
-  if (ownDesc && ownDesc.length > 15) {
-    return ownDesc;
+// 統計數字全部串好），比自己爬子節點拼湊準得多，也不會漏抓因捲動被裁切、
+// 需要另外展開的內容。但只有在容器節點自己的範圍跟 findTweetBounds()
+// 算出來的「這則貼文真正的垂直範圍」差不多吻合時才信任它——容器節點是
+// 爬父節點爬出來的，範圍還是有可能跟真實邊界對不上，這裡拿獨立算出來的
+// bounds 交叉驗證一次，對不上就不要用。讀不到/信不過（太短，或跟 bounds
+// 差太多）才退回：只抓「這則貼文垂直範圍內」的 TextView 文字串起來——不
+// 管節點在容器樹裡爬到第幾層，直接用畫面上的實際位置篩選，真正做到只看
+// 上下兩則貼文之間的內容，不會混進鄰篇。
+function extractCaption(container, bounds) {
+  if (container) {
+    var ownDesc = container.desc();
+    var cb = container.bounds();
+    var fitsBounds = cb && cb.top >= bounds.top - 20 && cb.bottom <= bounds.bottom + 20;
+    if (ownDesc && ownDesc.length > 15 && fitsBounds) {
+      return ownDesc;
+    }
   }
-  return container.find(className("android.widget.TextView"))
+  return className("android.widget.TextView").find()
+    .filter(function (n) { return nodeInBounds(n, bounds); })
     .map(function (n) { return n.text(); })
     .filter(Boolean)
     .join(" / ");
@@ -574,20 +643,26 @@ function extractCaption(container) {
 // 影片/照片自動判斷：媒體縮圖上，影片一定會疊一個時長徽章（"0:12" 這種
 // 分:秒 格式的短文字）或 GIF 徽章，照片不會有——這是介面本來就要給人看的
 // 資訊，比找 VideoView/ExoPlayer 這類自訂 View 的 class 名稱穩定（各版本
-// X App 常常換播放器元件、class 名稱不保證一樣）。兩種徽章都沒有、但容器
+// X App 常常換播放器元件、class 名稱不保證一樣）。只在這則貼文自己的
+// 垂直範圍內找，不會被鄰篇貼文的縮圖/徽章干擾。兩種徽章都沒有、但範圍
 // 裡至少找得到一張圖就當照片；連圖都找不到（理論上不該發生，能走到這裡
 // 代表已經偵測到讚，貼文應該都帶媒體）才回傳 null，讓呼叫端退回手動對話框。
-function detectMediaType(container) {
-  if (!container) return null;
-  var texts = container.find(className("android.widget.TextView")).map(function (n) { return n.text(); });
+function detectMediaType(bounds) {
+  var texts = className("android.widget.TextView").find()
+    .filter(function (n) { return nodeInBounds(n, bounds); })
+    .map(function (n) { return n.text(); });
   if (texts.some(function (t) { return /^\d{1,2}:\d{2}$/.test(t) || /^GIF$/i.test(t); })) {
     return "video";
   }
-  var descs = container.find(className("android.view.View")).map(function (n) { return n.desc(); }).filter(Boolean);
+  var descs = className("android.view.View").find()
+    .filter(function (n) { return nodeInBounds(n, bounds); })
+    .map(function (n) { return n.desc(); }).filter(Boolean);
   if (descs.some(function (d) { return /播放|^Play$|Video|影片/i.test(d); })) {
     return "video";
   }
-  if (container.find(className("android.widget.ImageView")).length > 0) {
+  var hasImage = className("android.widget.ImageView").find()
+    .filter(function (n) { return nodeInBounds(n, bounds); }).length > 0;
+  if (hasImage) {
     return "photo";
   }
   return null;
@@ -612,10 +687,11 @@ function runShareFlow(likeBtn, shareBtn, hint) {
     return;
   }
 
+  var bounds = findTweetBounds(likeBtn);
   var container = findTweetContainer(likeBtn);
-  var caption = extractCaption(container);
+  var caption = extractCaption(container, bounds);
   log("畫面文字（抓內文用，供你對照調整）：\n" + caption);
-  var mediaType = detectMediaType(container);
+  var mediaType = detectMediaType(bounds);
   log("媒體類型自動判斷：" + (mediaType || "判斷不出來，等一下跳對話框讓你選"));
 
   shareBtn.click();
