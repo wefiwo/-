@@ -146,7 +146,7 @@ var likedSeen = {}; // key: 按鈕座標, value: 上次看到是不是已按讚�
 // events.observeTouch()/onTouch() 呼叫本身就丟例外（設定階段失敗，不在
 // 我們自己包的 try/catch 範圍內），會讓腳本從那一行以下全部停止執行，
 // 這個輪詢執行緒如果寫在後面就永遠不會啟動。所以先讓它獨立跑起來。
-var FALLBACK_POLL_MS = 8000;
+var FALLBACK_POLL_MS = 3000; // 8000 感覺太慢，先抓 1.5s（會卡）跟 8s（太慢）中間值
 threads.start(function () {
   while (true) {
     sleep(FALLBACK_POLL_MS);
@@ -167,6 +167,7 @@ threads.start(function () {
 try {
   events.observeTouch();
   events.onTouch(function (point) {
+    log("收到觸控事件，座標 [" + point.x + "," + point.y + "]"); // 診斷用：確認這支 API 到底有沒有真的被呼叫
     threads.start(function () {
       try {
         if (currentPackage() === "com.twitter.android") {
