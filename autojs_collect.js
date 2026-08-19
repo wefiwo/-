@@ -338,7 +338,7 @@ function runShareFlow(shareBtn, hint) {
 
   // 畫面文字沒比對到任何角色，才手動補打一次。
   toastLog("畫面文字沒比對到角色，手動輸入");
-  var character = dialogs.rawInput("角色名稱（" + hint + "）", "");
+  var character = pickCharacterViaAutocomplete(hint);
   if (!character) { toastLog("已取消"); return; }
   var result2 = submitCollect(url, mediaType, "#" + character);
   if (result2.addedTo.length > 0) {
@@ -346,6 +346,35 @@ function runShareFlow(shareBtn, hint) {
   } else {
     toastLog("還是沒比對到，狀態碼 " + result2.statusCode + "，回報 log 對一下 hashtags.json 裡的名字");
   }
+}
+
+// 打同音字/部分字 → 打 /autocomplete 拿候選角色清單 → 多筆就跳選單點選。
+// 跟 Discord /抓圖 指令的自動完成是同一支後端 API（GET /autocomplete?q=），
+// 不用自己重寫拼音/注音比對邏輯。做不成邊打字邊即時更新（AutoJs6 的輸入
+// 對話框沒有那種即時 callback），改成「打完 → 查 → 選」兩步驟，結果一樣
+// 是選單點選，只是不是每個字都即時反應。
+function pickCharacterViaAutocomplete(hint) {
+  var query = dialogs.rawInput("角色名稱（" + hint + "，可打同音字）", "");
+  if (!query) return null;
+
+  var matches = [];
+  try {
+    var autocompleteUrl = BACKEND_URL.replace(/\/collect$/, "/autocomplete") + "?q=" + encodeURIComponent(query);
+    var res = http.get(autocompleteUrl);
+    matches = JSON.parse(res.body.string());
+  } catch (e) {
+    log("查詢 /autocomplete 失敗：" + e);
+  }
+
+  if (matches.length === 0) {
+    toastLog("沒查到符合的角色候選，直接用你打的字");
+    return query;
+  }
+  if (matches.length === 1) {
+    return matches[0];
+  }
+  var idx = dialogs.select("選角色", matches);
+  return idx === -1 ? null : matches[idx];
 }
 
 // 送出 /collect，回傳狀態碼跟後端實際比對到的角色清單（added_to）。
