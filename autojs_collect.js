@@ -75,6 +75,19 @@
 //   拆成兩把鎖：watchLock 只保護「讀/改 likedSeen」這段極短的檢查動作，
 //   收集流程改用另一把 collectLock，兩者職責分開，偵測不再被收集流程
 //   拖慢。
+//
+// v2.3 更新：實測發現觸控事件偵測「有時候整個沒反應，連 log 都沒有」，
+//   根因是 likedSeen 用螢幕座標當按鈕身分——X 時間軸每則貼文的讚按鈕
+//   幾乎都落在差不多的 Y 座標帶，捲動幾下後，新貼文的讚按鈕很可能剛好
+//   接在舊貼文按鈕待過的同一個座標，直接繼承到舊的「已經是讚」旗標，
+//   導致這次真正的新讚從一開始就判斷不出「有變化」，什麼都不會發生。
+//   改成觸控事件（checkTouchForNewLike()）不再依賴這個跨呼叫、跨捲動
+//   位置持久保存的座標紀錄，改成只在單次觸控內自己比較「按下當下」跟
+//   「200ms 後」同一顆按鈕的狀態——兩次都在毫秒等級的時間差內指向同一顆
+//   實體按鈕，跟捲動到哪裡完全無關。備援輪詢（watchLikes()）維持原本
+//   靠 likedSeen 跨呼叫比對的做法，這裡沒有「剛剛點了哪裡」這個線索、
+//   沒辦法完全避開座標碰撞風險，但觸控事件才是主要偵測路徑，輪詢純粹是
+//   安全網，殘留風險可接受。
 // ============================================================
 
 // 注意：不要在檔案開頭加 "ui";——加了會讓這支腳本自己佔用一個空白 Activity，
@@ -268,7 +281,7 @@ threads.start(function () {
     sleep(FALLBACK_POLL_MS);
     try {
       if (currentPackage() === "com.twitter.android") {
-        watchLikes(null);
+        watchLikes();
       }
     } catch (e) {
       log("備援輪詢出錯：" + e);
@@ -287,8 +300,7 @@ try {
     threads.start(function () {
       try {
         if (currentPackage() === "com.twitter.android") {
-          sleep(200); // 給畫面一點時間反應按讚動畫/狀態更新，太快讀到舊狀態
-          watchLikes(point);
+          checkTouchForNewLike(point);
         }
       } catch (e) {
         log("觸控偵測出錯：" + e);
@@ -347,38 +359,94 @@ var watchLock = threads.lock();
 // 前一個做完，不會拖累「偵測」這一半的即時性。
 var collectLock = threads.lock();
 
-// point 有給的話（觸控事件觸發時）只處理「觸控點落在按鈕範圍內」的那顆，
-// 不用檢查畫面上其他讚按鈕；point 是 null 時（備援輪詢）維持全部檢查。
-function watchLikes(point) {
+function runCollectLocked(btn) {
+  collectLock.lock();
+  try {
+    handleNewLike(btn);
+  } finally {
+    collectLock.unlock();
+  }
+}
+
+// 不確定 Rect 物件是否有現成的 contains() 方法可用，自己手動比較邊界比較保險。
+function boundsContainsPoint(b, point) {
+  return point.x >= b.left && point.x <= b.right && point.y >= b.top && point.y <= b.bottom;
+}
+
+function findLikeButtonAt(point) {
+  var buttons = descMatches(LIKE_BUTTON_PATTERN).find();
+  for (var i = 0; i < buttons.length; i++) {
+    if (boundsContainsPoint(buttons[i].bounds(), point)) {
+      return buttons[i];
+    }
+  }
+  return null;
+}
+
+// 觸控事件觸發的偵測——實測發現「有時候整個沒反應、連 log 都沒有」，根因
+// 是原本這裡也跟備援輪詢共用同一套「查 likedSeen 這個座標上次是不是已經
+// 讚過」的邏輯。X 的時間軸每則貼文的讚按鈕幾乎都落在差不多的 Y 座標帶，
+// 捲動幾下之後，新貼文的讚按鈕很可能剛好接在舊貼文按鈕待過的同一個座標，
+// 直接繼承到舊的「已經是讚」旗標——於是這次真正的新讚，一開始判斷式就是
+// false && true 而不是 false && true 該有的「有變化」，整個判斷都沒觸發，
+// 當然什麼 log 都不會印。
+//
+// 改成不依賴任何跨呼叫、跨捲動位置持久保存的座標紀錄，只在「這一次觸控」
+// 的範圍內自己比較：按下的當下先讀一次狀態（這時候按讚動畫還沒發生，讀到
+// 的是「點擊前」的真實狀態），200ms 後再讀一次同一個座標上的按鈕——兩次
+// 間隔不到一秒、比較的是同一顆實體按鈕，跟捲動到哪裡、這個座標之前是誰的
+// 完全無關。likedSeen 還是會順手更新（讓備援輪詢看到同一顆按鈕不會重複
+// 觸發一次），但觸控路徑本身不再讀它來判斷「有沒有變化」。
+function checkTouchForNewLike(point) {
+  var btnBefore = findLikeButtonAt(point);
+  if (!btnBefore) return;
+  var likedBefore = isLiked(btnBefore, btnBefore.desc());
+  sleep(200); // 給畫面一點時間反應按讚動畫/狀態更新，太快讀到舊狀態
+
+  var btn = findLikeButtonAt(point); // 重新查一次，200ms 前的節點參照可能已經失效
+  if (!btn) return;
+  var desc = btn.desc();
+  var likedAfter = isLiked(btn, desc);
+  var key = btn.bounds().toShortString();
+
+  watchLock.lock();
+  try {
+    likedSeen[key] = likedAfter;
+  } finally {
+    watchLock.unlock();
+  }
+
+  if (!likedBefore && likedAfter) {
+    log("觸控偵測到新的按讚，座標 " + key + "（checked=" + (typeof btn.checked === "function" ? btn.checked() : "n/a") + "）");
+    runCollectLocked(btn);
+  }
+}
+
+// 備援輪詢用的偵測——跟觸控路徑不同，這裡沒有「剛剛點了哪裡」這個線索，
+// 只能掃全畫面、靠 likedSeen 記住的「上次看到的狀態」比對出誰是新讚，所以
+// 沒辦法完全避開座標被不同貼文重複使用的風險（觸控路徑已經改成不依賴這個
+// 了，見上面 checkTouchForNewLike() 的說明）。用「這一輪畫面上實際還看得
+// 到的按鈕」修剪掉已經不在畫面上的舊紀錄，把座標碰撞的時間窗至少縮小到
+// 單一輪詢間隔內，不會整個 session 累積下去——觸控事件才是主要偵測路徑，
+// 這裡純粹是防觸控事件萬一漏接的安全網，殘留的座標碰撞風險可接受。
+function watchLikes() {
   var newlyLiked = [];
   watchLock.lock();
   try {
     var buttons = descMatches(LIKE_BUTTON_PATTERN).find();
-    // RecyclerView 列表項目本來就會回收、螢幕座標重複使用是常態，滑動
-    // 幾下就可能讓「上一篇滑走的貼文的已讚狀態」被誤當成「這篇貼文本來
-    // 就已經按過」（或反過來漏判新讚）。只在全畫面輪詢（point 為 null）
-    // 時，用「這一輪畫面上實際還看得到的按鈕」修剪掉已經不在畫面上的
-    // 舊紀錄——把座標碰撞的時間窗縮小到單一輪詢間隔內，不會整個 session
-    // 累積下去。觸控事件觸發的那次不做這件事，避免每次點擊都清一輪、
-    // 反而把備援輪詢原本追蹤到一半的狀態沖掉。
-    if (!point) {
-      var currentKeys = {};
-      buttons.forEach(function (btn) { currentKeys[btn.bounds().toShortString()] = true; });
-      Object.keys(likedSeen).forEach(function (k) {
-        if (!currentKeys[k]) delete likedSeen[k];
-      });
-    }
+    var currentKeys = {};
+    buttons.forEach(function (btn) { currentKeys[btn.bounds().toShortString()] = true; });
+    Object.keys(likedSeen).forEach(function (k) {
+      if (!currentKeys[k]) delete likedSeen[k];
+    });
     buttons.forEach(function (btn) {
-      if (point && !boundsContainsPoint(btn.bounds(), point)) {
-        return;
-      }
       var key = btn.bounds().toShortString();
       var desc = btn.desc();
       var wasLiked = !!likedSeen[key];
       var nowLiked = isLiked(btn, desc);
       likedSeen[key] = nowLiked;
       if (!wasLiked && nowLiked) {
-        log("偵測到新的按讚，座標 " + key + "（checked=" + (typeof btn.checked === "function" ? btn.checked() : "n/a") + "）");
+        log("備援輪詢偵測到新的按讚，座標 " + key + "（checked=" + (typeof btn.checked === "function" ? btn.checked() : "n/a") + "）");
         newlyLiked.push(btn);
       }
     });
@@ -387,19 +455,7 @@ function watchLikes(point) {
   }
   // 收集流程搬到偵測鎖外面跑，只用 collectLock 序列化實際操作畫面的部分，
   // 不會擋住其他執行緒接下來要做的偵測。
-  newlyLiked.forEach(function (btn) {
-    collectLock.lock();
-    try {
-      handleNewLike(btn);
-    } finally {
-      collectLock.unlock();
-    }
-  });
-}
-
-// 不確定 Rect 物件是否有現成的 contains() 方法可用，自己手動比較邊界比較保險。
-function boundsContainsPoint(b, point) {
-  return point.x >= b.left && point.x <= b.right && point.y >= b.top && point.y <= b.bottom;
+  newlyLiked.forEach(runCollectLocked);
 }
 
 function handleNewLike(likeBtn) {
