@@ -85,6 +85,10 @@ function getBackendUrl() {
   var saved = settings.get("backendUrl", "");
   if (saved) return saved;
   var entered = dialogs.rawInput("第一次設定：請貼上完整的 /collect 網址（例如 https://xxx.pythonanywhere.com/collect）", "");
+  // 診斷用：萬一以後又發生「明明填了卻沒存住」，這行能直接看出輸入框
+  // 當初實際收到的是什麼（null/取消、空字串、還是真的有值）。網址本身
+  // 不是敏感資訊，直接印全文沒關係。
+  log("getBackendUrl() 輸入框回傳：" + JSON.stringify(entered));
   var url = entered ? entered.trim().replace(/\/+$/, "") : "";
   if (url) settings.put("backendUrl", url);
   return url;
@@ -94,6 +98,9 @@ function getSecret() {
   var saved = settings.get("collectSecret", "");
   if (saved) return saved;
   var entered = dialogs.rawInput("第一次設定：請貼上你的 COLLECT_SECRET（跟 .env 裡的一致）", "");
+  // 密鑰不能整串印出來，只記長度——0 代表輸入框回傳空的/被取消，
+  // 有長度但後面還是讀不到值就代表 settings.put/get 本身有問題。
+  log("getSecret() 輸入框回傳長度：" + (entered ? entered.length : 0));
   var secret = entered ? entered.trim() : "";
   if (secret) settings.put("collectSecret", secret);
   return secret;
@@ -166,10 +173,21 @@ window.announce.click(function () {
 // 「設定」按鈕：重新設定後端網址/密鑰用，跟 likewatcher.user.js 選單裡的
 // 「重新設定後端網址」「重新設定 COLLECT_SECRET」是同一件事，AutoJs6 沒有
 // 瀏覽器分頁那種選單列可以掛，改成浮動按鈕 + 選單對話框達成一樣的效果。
+// 浮動視窗的 click 回呼本身跑在 UI 執行緒上，直接在裡面呼叫會阻塞等待的
+// dialogs.select()/dialogs.rawInput() 很容易讓對話框跳出來又立刻消失、
+// 完全沒反應（實測就是這樣）——跟下面「抓」按鈕同一個道理，都要包一層
+// threads.start() 丟到背景執行緒才能正常顯示、等待輸入。
 window.config.click(function () {
-  var idx = dialogs.select("重新設定", ["後端網址（含 /collect）", "COLLECT_SECRET"]);
-  if (idx === 0) reconfigureBackendUrl();
-  else if (idx === 1) reconfigureSecret();
+  threads.start(function () {
+    try {
+      var idx = dialogs.select("重新設定", ["後端網址（含 /collect）", "COLLECT_SECRET"]);
+      if (idx === 0) reconfigureBackendUrl();
+      else if (idx === 1) reconfigureSecret();
+    } catch (e) {
+      log("重新設定發生錯誤：" + e);
+      toastLog("重新設定出錯：" + e);
+    }
+  });
 });
 
 // 自己接管觸控事件，同時支援三種手勢：
