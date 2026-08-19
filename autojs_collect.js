@@ -134,16 +134,30 @@ function isLikedDesc(desc) {
   return /已按讚|取消讚|已喜歡|取消喜歡|Liked|Unlike/.test(desc || "");
 }
 
+// 判斷「已按讚」優先看 checked() 這個狀態旗標（無障礙服務裡對應網頁版空心/
+// 實心愛心切換的語意屬性，不受文字翻譯影響），旗標讀不到時才退回文字比對
+// 當備援——這也是之前「讚」vs「喜歡」翻譯不一致會漏判的根本解法。
+function isLiked(btn, desc) {
+  try {
+    if (typeof btn.checked === "function") {
+      return btn.checked();
+    }
+  } catch (e) {
+    // 有些節點沒有 checked 這個屬性，例外就退回文字比對
+  }
+  return isLikedDesc(desc);
+}
+
 function watchLikes() {
   var buttons = descMatches(/^(讚|Like|已按讚|取消讚|喜歡|已喜歡|取消喜歡|Liked|Unlike)$/).find();
   buttons.forEach(function (btn) {
     var key = btn.bounds().toShortString();
-    var state = btn.desc();
-    var wasLiked = isLikedDesc(likedSeen[key]);
-    var nowLiked = isLikedDesc(state);
-    likedSeen[key] = state;
+    var desc = btn.desc();
+    var wasLiked = !!likedSeen[key];
+    var nowLiked = isLiked(btn, desc);
+    likedSeen[key] = nowLiked;
     if (!wasLiked && nowLiked) {
-      log("偵測到新的按讚，座標 " + key);
+      log("偵測到新的按讚，座標 " + key + "（checked=" + (typeof btn.checked === "function" ? btn.checked() : "n/a") + "）");
       handleNewLike(btn);
     }
   });
