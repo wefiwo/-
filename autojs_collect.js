@@ -43,9 +43,11 @@
 var BACKEND_URL = "https://BoboboboB.pythonanywhere.com/collect";
 var COLLECT_SECRET = "填入你 .env 裡 COLLECT_SECRET 的值";
 // 開了之後，收集成功會順便通知到 .env 裡設定的 Discord 頻道（後端既有的
-// post_announcement 功能，跟 likewatcher.user.js 的公告開關是同一套邏輯，
-// 這邊改成 true 就等於幫每次收集都打開）。預設關閉。
-var ANNOUNCE_ENABLED = false;
+// post_announcement 功能，跟 likewatcher.user.js 的公告開關是同一套邏輯）。
+// 不用改程式碼，畫面上「公告」那顆懸浮按鈕點一下就能切換，狀態存在本機
+// （storages），重開腳本也記得。預設關閉。
+var settings = storages.create("autojs_collect");
+var ANNOUNCE_ENABLED = settings.get("announceEnabled", false);
 
 // 主控台預設隱藏，不會擋畫面——長按下面那顆懸浮按鈕可以隨時切換顯示/隱藏，
 // 平常靠 toastLog() 的小提示就夠了，隱不隱藏都不影響腳本邏輯（log 照樣有記錄）。
@@ -57,14 +59,29 @@ auto.waitFor(); // 沒開無障礙服務會先跳出授權畫面，開完才會�
 // 縮小、初始放右下角附近，不擋在讚/分享那排正中間。
 // 用 left|top 當基準座標系（setPosition 的 x/y 就是螢幕絕對座標，拖曳算距離比較單純）。
 var window = floaty.window(
-  <frame gravity="left|top">
+  <vertical gravity="left|top">
     <button id="collect" text="抓" w="36" h="36" textSize="10sp" style="Widget.AppCompat.Button.Colored"/>
-  </frame>
+    <button id="announce" text="公告" w="36" h="36" textSize="9sp"/>
+  </vertical>
 );
 // 用螢幕比例定位，不用「device.width - 固定像素」——按鈕大小是 dp、
 // device.width 是實際像素，兩種單位沒對齊，之前算出來的位置把按鈕推到
 // 螢幕外面去了（幾乎點不到）。比例算法不管螢幕密度多少都不會跑出邊界。
 window.setPosition(device.width * 0.82, device.height * 0.75);
+
+// 「公告」按鈕：單純點擊切換 ANNOUNCE_ENABLED，不用像「抓」那樣處理拖曳/
+// 長按——拖曳「抓」的時候會整個懸浮視窗一起移動，兩顆按鈕位置一直是相對的，
+// 不用個別處理。文字直接顯示目前開/關狀態，點了立刻更新 + 存到本機。
+function updateAnnounceButtonText() {
+  window.announce.setText(ANNOUNCE_ENABLED ? "公告\n開" : "公告\n關");
+}
+updateAnnounceButtonText();
+window.announce.click(function () {
+  ANNOUNCE_ENABLED = !ANNOUNCE_ENABLED;
+  settings.put("announceEnabled", ANNOUNCE_ENABLED);
+  updateAnnounceButtonText();
+  toastLog("收集成功時通知 Discord：" + (ANNOUNCE_ENABLED ? "開" : "關"));
+});
 
 // 自己接管觸控事件，同時支援三種手勢：
 //   按住不放拖曳 → 移動按鈕位置
