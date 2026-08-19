@@ -40,7 +40,8 @@
 // ---- 設定：改成你自己的值 ----
 var BACKEND_URL = "https://BoboboboB.pythonanywhere.com/collect";
 var COLLECT_SECRET = "填入你 .env 裡 COLLECT_SECRET 的值";
-var POLL_MS = 700;
+var POLL_MS = 1500; // 拉長間隔減少滑動時的卡頓感；沒查到有把握的「監聽點擊」API
+                     // 可以真正做到事件觸發，先用調高輪詢間隔這個穩妥做法
 
 // 主控台預設隱藏，不會擋畫面——長按下面那顆懸浮按鈕可以隨時切換顯示/隱藏，
 // 平常靠 toastLog() 的小提示就夠了，隱不隱藏都不影響腳本邏輯（log 照樣有記錄）。
@@ -191,6 +192,24 @@ function findShareButtonNearLike(likeBtn) {
   return null;
 }
 
+// 滑動時螢幕上常同時有兩篇貼文，抓內文如果掃整個畫面會把鄰篇的 hashtag 也
+// 混進來，導致比對到錯的角色。從按鈕往上找貼文卡片本身：一直往上爬，
+// 只要那層的高度還沒逼近整個螢幕高度，就當作還在同一張卡片內，繼續往上找
+// 更完整的範圍；一旦某層高度已經接近整個螢幕（代表爬到整個列表容器、
+// 已經涵蓋不只一篇貼文了），就停在「上一層」，不要用這層。
+function findTweetContainer(anchorBtn) {
+  var node = anchorBtn.parent();
+  var candidate = node;
+  for (var hops = 0; hops < 10 && node; hops++) {
+    if (node.bounds().height() > device.height() * 0.75) {
+      break;
+    }
+    candidate = node;
+    node = node.parent();
+  }
+  return candidate;
+}
+
 // 共用：點分享 → 複製連結 → 讀剪貼簿 → 跳出確認對話框 → 送出。
 // 主控台預設就是隱藏的（見檔案開頭 console.hide()），這裡不用特別處理顯示/
 // 隱藏——想看過程 log 就長按浮動按鈕切換，不想看就讓它一直藏著。
@@ -217,7 +236,8 @@ function runShareFlow(shareBtn, hint) {
     return;
   }
 
-  var caption = className("android.widget.TextView").find()
+  var container = findTweetContainer(shareBtn);
+  var caption = (container ? container.find(className("android.widget.TextView")) : className("android.widget.TextView").find())
     .map(function (n) { return n.text(); })
     .filter(Boolean).join(" / ");
   log("畫面文字（抓內文用，供你對照調整）：\n" + caption);
