@@ -11,16 +11,15 @@
 //      的無障礙服務打開（這就是能背景監看畫面的必要授權，md 檔提過的
 //      那個「可讀取螢幕所有內容」警告是這步驟本身，不是這支腳本額外要的）。
 //
-// 運作方式：用 events.onTouch() 監聽真正的觸控動作（事件觸發，不是固定
-// 秒數輪詢）——你點螢幕的當下，才去檢查那個點附近有沒有剛好是讚按鈕、
-// 狀態是不是從「未按」變「已按」。是的話自動觸發：先抓這篇貼文卡片範圍內
-// 的內文（避免混到鄰篇）跟自動判斷 photo/video 類型 → 找同一排的分享按鈕 →
-// 點分享 → 點複製連結 → 讀剪貼簿拿網址 → 把抓到的內文送給後端比對
-// hashtags.json（跟 likewatcher.user.js 同一套邏輯，後端自己判斷角色）。
-// 內文比對到角色、媒體類型也判斷得出來的話就全自動結束；媒體類型判斷不出來
-// 才跳對話框讓你手動選一次，內文沒比對到角色才跳對話框讓你手動補打角色
-// 名稱重送一次，兩者互不相關、各自只在真的需要時才問。另外留一個 3 秒一次
-// 的低頻全畫面備援輪詢，防觸控事件萬一漏接。
+// 運作方式（v3 重寫，見下面 v3 更新說明理由）：每 0.5 秒掃描一次目前畫面上
+// 看得到的讚按鈕，看誰的狀態從「未按」變「已按」——不靠猜你手指點在螢幕
+// 哪個座標。偵測到新的讚，自動觸發：先抓這篇貼文卡片範圍內的內文（避免
+// 混到鄰篇）跟自動判斷 photo/video 類型 → 找同一排的分享按鈕 → 點分享 →
+// 點複製連結 → 讀剪貼簿拿網址 → 把抓到的內文送給後端比對 hashtags.json
+// （跟 likewatcher.user.js 同一套邏輯，後端自己判斷角色）。內文比對到
+// 角色、媒體類型也判斷得出來的話就全自動結束；媒體類型判斷不出來才跳
+// 對話框讓你手動選一次，內文沒比對到角色才跳對話框讓你手動補打角色名稱
+// 重送一次，兩者互不相關、各自只在真的需要時才問。
 //
 // 已知限制／這是「先射箭再畫靶」的第一版，跟以前調 IG/FB 網頁版是同一套
 // 流程——先讓你實際操作、把 log() 印出來的內容回報，再照實際文字調整：
@@ -74,31 +73,38 @@
 //   等鎖——實測就是「第一次很順、之後常常要等快 10 秒才有反應」的成因。
 //   拆成兩把鎖：watchLock 只保護「讀/改 likedSeen」這段極短的檢查動作，
 //   收集流程改用另一把 collectLock，兩者職責分開，偵測不再被收集流程
-//   拖慢。
+//   拖慢。這個教訓在 v3 換了架構之後仍然適用，見 v3 說明。
 //
-// v2.3 更新：實測發現觸控事件偵測「有時候整個沒反應，連 log 都沒有」，
-//   根因是 likedSeen 用螢幕座標當按鈕身分——X 時間軸每則貼文的讚按鈕
-//   幾乎都落在差不多的 Y 座標帶，捲動幾下後，新貼文的讚按鈕很可能剛好
-//   接在舊貼文按鈕待過的同一個座標，直接繼承到舊的「已經是讚」旗標，
-//   導致這次真正的新讚從一開始就判斷不出「有變化」，什麼都不會發生。
-//   改成觸控事件（checkTouchForNewLike()）不再依賴這個跨呼叫、跨捲動
-//   位置持久保存的座標紀錄，改成只在單次觸控內自己比較「按下當下」跟
-//   「200ms 後」同一顆按鈕的狀態——兩次都在毫秒等級的時間差內指向同一顆
-//   實體按鈕，跟捲動到哪裡完全無關。備援輪詢（watchLikes()）維持原本
-//   靠 likedSeen 跨呼叫比對的做法，這裡沒有「剛剛點了哪裡」這個線索、
-//   沒辦法完全避開座標碰撞風險，但觸控事件才是主要偵測路徑，輪詢純粹是
-//   安全網，殘留風險可接受。
+// v2.3～v2.4（已被 v3 取代，留著紀錄走過的彎路）：這兩版想解決的都是同一件
+//   事——「觸控座標 → 猜是哪顆讚按鈕」這個對應關係不可靠：v2.3 是螢幕座標
+//   被不同貼文重複使用，讓真正的新讚判斷不出「有變化」、整個靜默；v2.4 是
+//   放寬容錯半徑到 150px 想解決「精確落點對不準」，結果反而讓容錯直接抓到
+//   隔壁貼文的讚按鈕，把內文/網址整個抓錯——比原本的「沒反應」更糟，因為
+//   沒反應只是漏收集，抓錯是把錯的角色資料寫進收藏庫。兩版換來換去都在
+//   「太緊會漏、太鬆會抓錯」之間打轉，因為問題出在「用觸控螢幕座標去猜
+//   按鈕」這個做法本身有先天缺陷，不是半徑數字調得夠不夠準的問題。
 //
-// v2.4 更新：實測又抓到一次「完全沒反應、連一行 log 都沒有」——這次不是
-//   靠使用者回報，是直接比對錄影裡讚數的變化（89→90）自己查出來的：某則
-//   貼文（畫面看起來像影片/展開燈箱檢視，帶播放進度條、右上右下有 ✕ 關閉
-//   鍵）點讚後，觸控座標精確比對「有沒有落在讚按鈕範圍內」直接落空，
-//   findLikeButtonAt() 第一行就 return 掉，往後什麼都不會發生。改成精確
-//   比對找不到時，退而求其次找觸控點附近（150px 內）最近的一顆讚按鈕當
-//   備援；另外「按下當下有找到、200ms 後卻找不到了」這種比較罕見、值得
-//   留意的情況也補上一行 log，不再整個靜默。這仍然是照現有證據做的猜測
-//   修正，如果影片/燈箱檢視這類畫面下讚按鈕的節點結構其實整個不一樣，這
-//   個修法可能還是不夠，需要再靠實測結果確認。
+// v3 更新（架構重寫，不再猜觸控座標）：改成定期直接掃描畫面上現有的讚
+//   按鈕，看誰的 checked()/desc() 狀態從「未按」變「已按」——不靠任何
+//   「這個觸控點對應哪顆按鈕」的猜測，直接問按鈕本身「你現在的狀態是
+//   什麼」，天生不會有座標對不準或猜錯鄰篇的問題。輪詢頻率從原本當
+//   「安全網」用的 3 秒收緊到 0.5 秒，人眼幾乎感覺不到延遲，也不再需要
+//   events.onTouch()/觀察觸控這整條路線（整段拿掉）。
+//   likedSeen 的 key 也一併換掉：不再用螢幕座標（會被不同貼文重複使用），
+//   改用「這則貼文自己的內容」（tweetIdentity()，靠 findTweetContainer()
+//   抓到的 contentDescription，抓不到才退回拼接文字）當身分——同一則貼文
+//   不管捲到畫面上哪個位置，內容都一樣、算出來的身分也一樣；不同貼文
+//   內容不同，天生不會撞 key，從根本上避開 v2.3/v2.4 那整類問題，不需要
+//   再猜任何容錯半徑。
+//   收集流程延續 v2.2 的教訓，改成每偵測到一個新讚就丟到獨立執行緒跑
+//   （不再是「先收集完 forEach 裡的所有新讚才回到迴圈頂端」），這樣就算
+//   某次收集卡住（等對話框、等後端回應），也不會拖累下一輪 0.5 秒的偵測；
+//   collectLock 還是保留，讓實際操作畫面（點分享/開分享選單）這段互相
+//   序列化，避免兩個讚同時搶著點分享按鈕互相干擾。v2.2 那把 watchLock
+//   拿掉了：它原本是為了不讓觸控事件跟備援輪詢兩條獨立執行緒同時搶著讀寫
+//   likedSeen，但 v3 已經沒有觸控事件那條路線，全部偵測都在同一個輪詢
+//   迴圈的同一條執行緒裡循序做，不會有並行讀寫的問題，留著那把鎖反而是
+//   保護一個已經不存在的競爭情境。
 // ============================================================
 
 // 注意：不要在檔案開頭加 "ui";——加了會讓這支腳本自己佔用一個空白 Activity，
@@ -274,55 +280,29 @@ window.collect.setOnTouchListener(function (view, event) {
   return false;
 });
 
-// ---- 自動偵測按讚：改成「有人點螢幕才檢查」，不是固定秒數全螢幕掃描 ----
-// events.onTouch() 是事件觸發（真的有觸控動作才會呼叫），不是輪詢——
-// 點下去之後只檢查「那個點附近」有沒有剛好是讚按鈕，不用每隔 X 秒把整個
-// 畫面所有讚按鈕都掃一遍。額外留一個很低頻率（8 秒一次）的全畫面備援輪詢，
-// 純粹防呆用（例如觸控事件萬一漏接、或用其他方式間接觸發按讚的情況），
-// 平常主要靠觸控事件觸發，備援輪詢間隔拉得夠長不會造成卡頓感。
-var likedSeen = {}; // key: 按鈕座標, value: 上次看到是不是已按讚（boolean）
+// ---- 自動偵測按讚：定期直接掃描讚按鈕狀態，不猜觸控座標 ----
+// 不再監聽 events.onTouch()——原本靠「觸控點座標」去猜是哪顆按鈕，這個
+// 對應關係在 RecyclerView 列表（座標被不同貼文重複使用）跟緊湊版面
+// （容錯半徑一放寬就跨到隔壁貼文）這兩種情況下都不可靠，見檔案開頭 v3
+// 更新的說明。改成每 POLL_MS 直接問畫面上每一顆讚按鈕「你現在的狀態是
+// 什麼」，用內容身分（tweetIdentity()）記住「上次看到的狀態」，跟座標
+// 完全無關。
+var likedSeen = {}; // key: 貼文內容身分（tweetIdentity()），value: 上次看到是不是已按讚（boolean）
 
-// 備援輪詢一定要先啟動、且不能被下面的觸控事件設定拖累——如果
-// events.observeTouch()/onTouch() 呼叫本身就丟例外（設定階段失敗，不在
-// 我們自己包的 try/catch 範圍內），會讓腳本從那一行以下全部停止執行，
-// 這個輪詢執行緒如果寫在後面就永遠不會啟動。所以先讓它獨立跑起來。
-var FALLBACK_POLL_MS = 3000; // 8000 感覺太慢，先抓 1.5s（會卡）跟 8s（太慢）中間值
+var POLL_MS = 500; // 人眼幾乎感覺不到延遲；如果覺得吃電/頓，可以調高
 threads.start(function () {
   while (true) {
-    sleep(FALLBACK_POLL_MS);
+    sleep(POLL_MS);
     try {
       if (currentPackage() === "com.twitter.android") {
         watchLikes();
       }
     } catch (e) {
-      log("備援輪詢出錯：" + e);
-      toastLog("備援輪詢出錯：" + e);
+      log("輪詢偵測出錯：" + e);
+      toastLog("輪詢偵測出錯：" + e);
     }
   }
 });
-
-// 觸控事件設定本身包一層 try/catch——這個 API 能不能穩定運作還沒把握，
-// 設定失敗就跳提示、直接退回純靠上面那個備援輪詢運作，不要讓失敗拖垮
-// 整支腳本。
-try {
-  events.observeTouch();
-  events.onTouch(function (point) {
-    log("收到觸控事件，座標 [" + point.x + "," + point.y + "]"); // 診斷用：確認這支 API 到底有沒有真的被呼叫
-    threads.start(function () {
-      try {
-        if (currentPackage() === "com.twitter.android") {
-          checkTouchForNewLike(point);
-        }
-      } catch (e) {
-        log("觸控偵測出錯：" + e);
-        toastLog("觸控偵測出錯：" + e);
-      }
-    });
-  });
-} catch (e) {
-  log("觸控事件監聽設定失敗，改用純輪詢：" + e);
-  toastLog("觸控事件監聽設定失敗，改用純輪詢：" + e);
-}
 
 // 讚按鈕的文字/描述模式，全檔共用同一份，不要各處各寫一次猜測的文字。
 var LIKE_BUTTON_PATTERN = /^(讚|Like|已按讚|取消讚|喜歡|已喜歡|取消喜歡|Liked|Unlike)$/;
@@ -349,25 +329,13 @@ function isLiked(btn, desc) {
   return checkedState || isLikedDesc(desc);
 }
 
-// 觸控事件（每次點擊各自開一條執行緒）跟備援輪詢是兩條獨立背景執行緒，
-// 很可能同時間都在檢查同一顆讚按鈕，兩邊互相不知道對方的存在，容易對
-// 同一次按讚各自觸發一次收集流程，疊在一起就變成看起來停不下來、
-// 一直跳分享/複製連結/角色輸入。用一把鎖把「檢查」這段包起來，同一時間
-// 只有一條執行緒能讀/改 likedSeen，不會重複觸發。
-//
-// 這把鎖故意只包「檢查」，不包後面的收集流程——原本兩段是包在同一把鎖
-// 裡的，但收集流程（點分享、複製連結、可能跳對話框、打 API）動輒好幾秒
-// 起跳，等於「還在處理上一個讚」的時候，後面所有讚（就算是完全不同篇
-// 貼文）的偵測都會被卡住等鎖，實測就是「第一次很順、之後常常要等快 10
-// 秒才有反應」的成因。拆成兩把鎖：watchLock 只保護這段極短的檢查動作，
-// 收集流程改用下面另一把 collectLock，兩者職責分開。
-var watchLock = threads.lock();
-
-// 收集流程（操作畫面）用的鎖，跟上面的偵測鎖分開——這段還是要序列化，
-// 不然兩個讚同時各自點分享按鈕、開分享選單，畫面會互相干擾。分開之後，
-// 就算上一個讚還在跑收集流程（甚至卡在等你手動選類型/打角色名稱），
-// 下一個讚照樣能立刻被偵測到、記下狀態，只是實際跑收集流程要排隊等
-// 前一個做完，不會拖累「偵測」這一半的即時性。
+// 收集流程（操作畫面：點分享/開分享選單/複製連結）用的鎖——這段要序列化，
+// 不然兩個讚同時各自點分享按鈕，畫面會互相干擾。watchLikes() 每偵測到一個
+// 新讚，就丟到自己的獨立執行緒去跑收集流程（見下面），多個執行緒可能同時
+// 想進來跑收集，這把鎖讓它們排隊、一次只有一個真的在操作畫面；沒在等這把
+// 鎖的下一輪輪詢（watchLikes() 本身）完全不受影響，繼續每 POLL_MS 檢查一次，
+// 不會被卡住的收集流程拖慢（沿用 v2.2 學到的教訓：偵測跟收集是兩件事，
+// 一個慢不能拖累另一個快）。
 var collectLock = threads.lock();
 
 function runCollectLocked(btn) {
@@ -379,119 +347,61 @@ function runCollectLocked(btn) {
   }
 }
 
-// 不確定 Rect 物件是否有現成的 contains() 方法可用，自己手動比較邊界比較保險。
-function boundsContainsPoint(b, point) {
-  return point.x >= b.left && point.x <= b.right && point.y >= b.top && point.y <= b.bottom;
+// 這則貼文的「內容身分」，取代原本用螢幕座標當 likedSeen 的 key——螢幕
+// 座標會被 RecyclerView 回收、不同貼文重複使用，內容不會。優先用容器節點
+// 自己的 contentDescription（findTweetContainer()/extractCaption() 已經
+// 在用的同一份東西，這裡再呼叫一次省得另外傳遞，多一點點運算量換來身分
+// 跟座標完全無關，值得）；抓不到才退回拼接文字，一樣是內容而不是座標，
+// 只是不像 contentDescription 那麼精確。真的完全抓不到內容（理論上不該
+// 發生）就回傳 null，呼叫端會直接跳過這顆按鈕、留到下一輪輪詢再試，不會
+// 因為算不出身分就誤觸發或誤判。
+function tweetIdentity(btn) {
+  var container = findTweetContainer(btn);
+  if (!container) return null;
+  var desc = container.desc();
+  if (desc && desc.length > 5) return "d:" + desc;
+  var texts = container.find(className("android.widget.TextView"))
+    .map(function (n) { return n.text(); })
+    .filter(Boolean)
+    .join("|");
+  return texts ? "t:" + texts : null;
 }
 
-// 觸控座標容忍度：實測發現有些貼文（尤其看起來像影片/展開燈箱檢視，帶
-// 播放進度條、右上右下有 ✕ 關閉鍵那種畫面）點讚完全沒反應、連一行 log
-// 都沒印——事後比對讚數（89→90）證實使用者確實點到讚了，代表當下這個
-// 座標精確比對「有沒有落在按鈕範圍內」直接落空，第一行就 return 掉。
-// 猜測是這類檢視下無障礙服務回報的按鈕範圍跟手指實際點擊的螢幕座標對
-// 不太準。改成精確比對找不到時，退而求其次找「觸控點附近一定範圍內」
-// 最近的一顆讚按鈕當備援，不要一找不到精確落點就直接放棄。
-var NEAR_TOUCH_RADIUS = 150; // px，大約是螢幕上一顆按鈕再加一點誤差空間
-
-function findLikeButtonAt(point) {
+// 主要偵測機制：每 POLL_MS 直接掃一次畫面上現有的讚按鈕，用 tweetIdentity()
+// 記住的「上次看到的狀態」比對出誰的狀態從「未按」變「已按」——不靠猜觸控
+// 座標對應哪顆按鈕，見檔案開頭 v3 更新的說明。
+function watchLikes() {
   var buttons = descMatches(LIKE_BUTTON_PATTERN).find();
-  for (var i = 0; i < buttons.length; i++) {
-    if (boundsContainsPoint(buttons[i].bounds(), point)) {
-      return buttons[i];
-    }
-  }
-  var nearest = null, nearestDist = Infinity;
+  var currentIds = {};
   buttons.forEach(function (btn) {
-    var b = btn.bounds();
-    var cx = (b.left + b.right) / 2, cy = (b.top + b.bottom) / 2;
-    var dist = Math.sqrt(Math.pow(cx - point.x, 2) + Math.pow(cy - point.y, 2));
-    if (dist < NEAR_TOUCH_RADIUS && dist < nearestDist) {
-      nearest = btn;
-      nearestDist = dist;
+    var id = tweetIdentity(btn);
+    if (!id) return; // 這一輪算不出身分，跳過，下一輪再試
+    currentIds[id] = true;
+    var wasLiked = !!likedSeen[id];
+    var nowLiked = isLiked(btn, btn.desc());
+    likedSeen[id] = nowLiked;
+    if (!wasLiked && nowLiked) {
+      log("偵測到新的按讚：" + id.slice(0, 40) + "…（checked=" + (typeof btn.checked === "function" ? btn.checked() : "n/a") + "）");
+      // 收集流程丟到獨立執行緒跑，不要卡在這個 forEach 裡——不然這一輪
+      // 偵測要等收集流程跑完（可能好幾秒、可能還在等你選類型/打角色）
+      // 才能回到迴圈頂端繼續下一輪 POLL_MS，等於偵測被收集流程拖慢，
+      // 重蹈 v2.2 的覆轍。
+      threads.start(function () {
+        try {
+          runCollectLocked(btn);
+        } catch (e) {
+          log("收集流程發生錯誤：" + e);
+          toastLog("收集流程出錯：" + e);
+        }
+      });
     }
   });
-  return nearest;
-}
-
-// 觸控事件觸發的偵測——實測發現「有時候整個沒反應、連 log 都沒有」，根因
-// 是原本這裡也跟備援輪詢共用同一套「查 likedSeen 這個座標上次是不是已經
-// 讚過」的邏輯。X 的時間軸每則貼文的讚按鈕幾乎都落在差不多的 Y 座標帶，
-// 捲動幾下之後，新貼文的讚按鈕很可能剛好接在舊貼文按鈕待過的同一個座標，
-// 直接繼承到舊的「已經是讚」旗標——於是這次真正的新讚，一開始判斷式就是
-// false && true 而不是 false && true 該有的「有變化」，整個判斷都沒觸發，
-// 當然什麼 log 都不會印。
-//
-// 改成不依賴任何跨呼叫、跨捲動位置持久保存的座標紀錄，只在「這一次觸控」
-// 的範圍內自己比較：按下的當下先讀一次狀態（這時候按讚動畫還沒發生，讀到
-// 的是「點擊前」的真實狀態），200ms 後再讀一次同一個座標上的按鈕——兩次
-// 間隔不到一秒、比較的是同一顆實體按鈕，跟捲動到哪裡、這個座標之前是誰的
-// 完全無關。likedSeen 還是會順手更新（讓備援輪詢看到同一顆按鈕不會重複
-// 觸發一次），但觸控路徑本身不再讀它來判斷「有沒有變化」。
-function checkTouchForNewLike(point) {
-  var btnBefore = findLikeButtonAt(point);
-  if (!btnBefore) return;
-  var likedBefore = isLiked(btnBefore, btnBefore.desc());
-  sleep(200); // 給畫面一點時間反應按讚動畫/狀態更新，太快讀到舊狀態
-
-  var btn = findLikeButtonAt(point); // 重新查一次，200ms 前的節點參照可能已經失效
-  if (!btn) {
-    // 這裡已經確定「按下當下」附近有讚按鈕（不然上面就 return 了），200ms
-    // 後卻整個消失，值得留一筆 log——不像單純滑動/點到別處那樣是常態，
-    // 比較可能是畫面在這 200ms 內整個換了（例如點讚順便展開了燈箱檢視）。
-    log("按下時找到讚按鈕，200ms 後卻找不到了，座標 [" + point.x + "," + point.y + "]");
-    return;
-  }
-  var desc = btn.desc();
-  var likedAfter = isLiked(btn, desc);
-  var key = btn.bounds().toShortString();
-
-  watchLock.lock();
-  try {
-    likedSeen[key] = likedAfter;
-  } finally {
-    watchLock.unlock();
-  }
-
-  if (!likedBefore && likedAfter) {
-    log("觸控偵測到新的按讚，座標 " + key + "（checked=" + (typeof btn.checked === "function" ? btn.checked() : "n/a") + "）");
-    runCollectLocked(btn);
-  }
-}
-
-// 備援輪詢用的偵測——跟觸控路徑不同，這裡沒有「剛剛點了哪裡」這個線索，
-// 只能掃全畫面、靠 likedSeen 記住的「上次看到的狀態」比對出誰是新讚，所以
-// 沒辦法完全避開座標被不同貼文重複使用的風險（觸控路徑已經改成不依賴這個
-// 了，見上面 checkTouchForNewLike() 的說明）。用「這一輪畫面上實際還看得
-// 到的按鈕」修剪掉已經不在畫面上的舊紀錄，把座標碰撞的時間窗至少縮小到
-// 單一輪詢間隔內，不會整個 session 累積下去——觸控事件才是主要偵測路徑，
-// 這裡純粹是防觸控事件萬一漏接的安全網，殘留的座標碰撞風險可接受。
-function watchLikes() {
-  var newlyLiked = [];
-  watchLock.lock();
-  try {
-    var buttons = descMatches(LIKE_BUTTON_PATTERN).find();
-    var currentKeys = {};
-    buttons.forEach(function (btn) { currentKeys[btn.bounds().toShortString()] = true; });
-    Object.keys(likedSeen).forEach(function (k) {
-      if (!currentKeys[k]) delete likedSeen[k];
-    });
-    buttons.forEach(function (btn) {
-      var key = btn.bounds().toShortString();
-      var desc = btn.desc();
-      var wasLiked = !!likedSeen[key];
-      var nowLiked = isLiked(btn, desc);
-      likedSeen[key] = nowLiked;
-      if (!wasLiked && nowLiked) {
-        log("備援輪詢偵測到新的按讚，座標 " + key + "（checked=" + (typeof btn.checked === "function" ? btn.checked() : "n/a") + "）");
-        newlyLiked.push(btn);
-      }
-    });
-  } finally {
-    watchLock.unlock();
-  }
-  // 收集流程搬到偵測鎖外面跑，只用 collectLock 序列化實際操作畫面的部分，
-  // 不會擋住其他執行緒接下來要做的偵測。
-  newlyLiked.forEach(runCollectLocked);
+  // 這一輪畫面上已經看不到的貼文，把牠的舊紀錄清掉——內容身分本來就不會
+  // 跨貼文碰撞，這裡純粹是避免 likedSeen 隨著捲動無限長大，不是為了修正
+  // 座標碰撞（那個問題在新設計下已經不存在了）。
+  Object.keys(likedSeen).forEach(function (id) {
+    if (!currentIds[id]) delete likedSeen[id];
+  });
 }
 
 function handleNewLike(likeBtn) {
@@ -628,8 +538,8 @@ function runShareFlow(likeBtn, shareBtn, hint) {
   // 或送出時是空字串——這兩種情況都不會存進 storages，見 getBackendUrl()/
   // getSecret()），不要先把整段點分享/複製連結/跳對話框都跑完才在最後
   // submitCollect() 打 http.postJson 時才炸掉——實測炸出來的是
-  // "Invalid URL host: \"\"" 這種看不懂在講什麼的例外，而且備援輪詢每
-  // 3 秒就會對同一顆按鈕重複炸一次。一開始就先擋掉，不執行任何畫面操作。
+  // "Invalid URL host: \"\"" 這種看不懂在講什麼的例外。一開始就先擋掉，
+  // 不執行任何畫面操作。
   if (!BACKEND_URL || !COLLECT_SECRET) {
     toastLog("尚未設定後端網址/密鑰，點「設定」按鈕填一下再試");
     return;
