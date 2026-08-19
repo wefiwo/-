@@ -88,6 +88,17 @@
 //   靠 likedSeen 跨呼叫比對的做法，這裡沒有「剛剛點了哪裡」這個線索、
 //   沒辦法完全避開座標碰撞風險，但觸控事件才是主要偵測路徑，輪詢純粹是
 //   安全網，殘留風險可接受。
+//
+// v2.4 更新：實測又抓到一次「完全沒反應、連一行 log 都沒有」——這次不是
+//   靠使用者回報，是直接比對錄影裡讚數的變化（89→90）自己查出來的：某則
+//   貼文（畫面看起來像影片/展開燈箱檢視，帶播放進度條、右上右下有 ✕ 關閉
+//   鍵）點讚後，觸控座標精確比對「有沒有落在讚按鈕範圍內」直接落空，
+//   findLikeButtonAt() 第一行就 return 掉，往後什麼都不會發生。改成精確
+//   比對找不到時，退而求其次找觸控點附近（150px 內）最近的一顆讚按鈕當
+//   備援；另外「按下當下有找到、200ms 後卻找不到了」這種比較罕見、值得
+//   留意的情況也補上一行 log，不再整個靜默。這仍然是照現有證據做的猜測
+//   修正，如果影片/燈箱檢視這類畫面下讚按鈕的節點結構其實整個不一樣，這
+//   個修法可能還是不夠，需要再靠實測結果確認。
 // ============================================================
 
 // 注意：不要在檔案開頭加 "ui";——加了會讓這支腳本自己佔用一個空白 Activity，
@@ -373,6 +384,15 @@ function boundsContainsPoint(b, point) {
   return point.x >= b.left && point.x <= b.right && point.y >= b.top && point.y <= b.bottom;
 }
 
+// 觸控座標容忍度：實測發現有些貼文（尤其看起來像影片/展開燈箱檢視，帶
+// 播放進度條、右上右下有 ✕ 關閉鍵那種畫面）點讚完全沒反應、連一行 log
+// 都沒印——事後比對讚數（89→90）證實使用者確實點到讚了，代表當下這個
+// 座標精確比對「有沒有落在按鈕範圍內」直接落空，第一行就 return 掉。
+// 猜測是這類檢視下無障礙服務回報的按鈕範圍跟手指實際點擊的螢幕座標對
+// 不太準。改成精確比對找不到時，退而求其次找「觸控點附近一定範圍內」
+// 最近的一顆讚按鈕當備援，不要一找不到精確落點就直接放棄。
+var NEAR_TOUCH_RADIUS = 150; // px，大約是螢幕上一顆按鈕再加一點誤差空間
+
 function findLikeButtonAt(point) {
   var buttons = descMatches(LIKE_BUTTON_PATTERN).find();
   for (var i = 0; i < buttons.length; i++) {
@@ -380,7 +400,17 @@ function findLikeButtonAt(point) {
       return buttons[i];
     }
   }
-  return null;
+  var nearest = null, nearestDist = Infinity;
+  buttons.forEach(function (btn) {
+    var b = btn.bounds();
+    var cx = (b.left + b.right) / 2, cy = (b.top + b.bottom) / 2;
+    var dist = Math.sqrt(Math.pow(cx - point.x, 2) + Math.pow(cy - point.y, 2));
+    if (dist < NEAR_TOUCH_RADIUS && dist < nearestDist) {
+      nearest = btn;
+      nearestDist = dist;
+    }
+  });
+  return nearest;
 }
 
 // 觸控事件觸發的偵測——實測發現「有時候整個沒反應、連 log 都沒有」，根因
@@ -404,7 +434,13 @@ function checkTouchForNewLike(point) {
   sleep(200); // 給畫面一點時間反應按讚動畫/狀態更新，太快讀到舊狀態
 
   var btn = findLikeButtonAt(point); // 重新查一次，200ms 前的節點參照可能已經失效
-  if (!btn) return;
+  if (!btn) {
+    // 這裡已經確定「按下當下」附近有讚按鈕（不然上面就 return 了），200ms
+    // 後卻整個消失，值得留一筆 log——不像單純滑動/點到別處那樣是常態，
+    // 比較可能是畫面在這 200ms 內整個換了（例如點讚順便展開了燈箱檢視）。
+    log("按下時找到讚按鈕，200ms 後卻找不到了，座標 [" + point.x + "," + point.y + "]");
+    return;
+  }
   var desc = btn.desc();
   var likedAfter = isLiked(btn, desc);
   var key = btn.bounds().toShortString();
