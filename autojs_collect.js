@@ -42,6 +42,10 @@
 // ---- 設定：改成你自己的值 ----
 var BACKEND_URL = "https://BoboboboB.pythonanywhere.com/collect";
 var COLLECT_SECRET = "填入你 .env 裡 COLLECT_SECRET 的值";
+// 開了之後，收集成功會順便通知到 .env 裡設定的 Discord 頻道（後端既有的
+// post_announcement 功能，跟 likewatcher.user.js 的公告開關是同一套邏輯，
+// 這邊改成 true 就等於幫每次收集都打開）。預設關閉。
+var ANNOUNCE_ENABLED = false;
 
 // 主控台預設隱藏，不會擋畫面——長按下面那顆懸浮按鈕可以隨時切換顯示/隱藏，
 // 平常靠 toastLog() 的小提示就夠了，隱不隱藏都不影響腳本邏輯（log 照樣有記錄）。
@@ -317,6 +321,7 @@ function submitCollect(url, mediaType, text) {
     url: url,
     type: mediaType,
     text: text,
+    announce: ANNOUNCE_ENABLED,
   }, {
     headers: { "X-Collect-Secret": COLLECT_SECRET },
   });
