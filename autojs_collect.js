@@ -411,7 +411,18 @@ function watchLikes() {
   var currentIds = {};
   buttons.forEach(function (btn) {
     var id = tweetIdentity(btn);
-    if (!id) return; // 這一輪算不出身分，跳過，下一輪再試
+    if (!id) {
+      // 算不出身分代表這顆按鈕永遠不會被追蹤到——如果它剛好又是已讚狀態，
+      // 就會變成「點了讚、但這顆按鈕從頭到尾沒被記錄過，也就永遠不會被
+      // 判斷成『有變化』」，實測對應的症狀就是點了半天完全沒反應，連
+      // 找不到分享按鈕之類的錯誤都不會有，因為根本沒進到後面那段邏輯。
+      // 這種情況理論上不該發生（有讚按鈕的地方通常找得到夠長的內文），
+      // 一旦真的發生就留一筆 log，不要繼續整個靜默下去。
+      if (isLiked(btn, btn.desc())) {
+        log("讚按鈕算不出內容身分（tweetIdentity 回傳 null），這顆會被跳過、永遠不會觸發收集，回報這行 log 給開發者");
+      }
+      return; // 這一輪算不出身分，跳過，下一輪再試
+    }
     currentIds[id] = true;
     var wasLiked = !!likedSeen[id];
     var nowLiked = isLiked(btn, btn.desc());
