@@ -60,20 +60,72 @@
 //     結構 dump 精準定位——contentDescription 抓法、時長徽章判斷法能不能
 //     完全對上你這版 X App 的實際畫面結構，還是要靠你實際跑一輪、把
 //     log() 內容回報回來才能確認，抓不準的地方之後再照實測結果回頭調。
+//
+// v2.1 更新：BACKEND_URL/COLLECT_SECRET 改成存在本機、不寫死在檔案內容裡
+//   （見下面 getBackendUrl()/getSecret() 的說明）——起因是拿新版腳本整份
+//   覆蓋舊檔案這個操作本身完全沒問題，但這兩個值原本是寫死在腳本內容裡的
+//   佔位字串，整份覆蓋會連同這兩個已經設定好的真實值一起蓋掉，變成要手動
+//   搬回去才能用。
 // ============================================================
 
 // 注意：不要在檔案開頭加 "ui";——加了會讓這支腳本自己佔用一個空白 Activity，
 // 之後點 AutoJs6 App 圖示會點到那個空白畫面而不是 AutoJs6 真正的主介面，
 // 而且這支腳本用不到 ui 佈局模式（浮動視窗/對話框都不需要它）。
 
-// ---- 設定：改成你自己的值 ----
-var BACKEND_URL = "https://BoboboboB.pythonanywhere.com/collect";
-var COLLECT_SECRET = "填入你 .env 裡 COLLECT_SECRET 的值";
+// ---- 設定：後端網址/密鑰 ----
+// 跟 likewatcher.user.js 的 getBackendUrl()/getSecret() 同一招：存在本機
+// （storages，AutoJs6 版的 GM_setValue/GM_getValue），不寫死在腳本內容裡。
+// 第一次執行才會跳輸入框問一次，之後都記得住、重開腳本也不會忘；不管之後
+// 拿新版檔案整份覆蓋幾次，都不會連帶把這兩個值蓋掉——換版本只要直接丟新
+// 檔案上去執行就好，不用再手動把舊值搬回來。畫面上「設定」那顆懸浮按鈕
+// 可以隨時重新設定（例如密鑰要換、後端網址搬家）。
+var settings = storages.create("autojs_collect");
+
+function getBackendUrl() {
+  var saved = settings.get("backendUrl", "");
+  if (saved) return saved;
+  var entered = dialogs.rawInput("第一次設定：請貼上完整的 /collect 網址（例如 https://xxx.pythonanywhere.com/collect）", "");
+  var url = entered ? entered.trim().replace(/\/+$/, "") : "";
+  if (url) settings.put("backendUrl", url);
+  return url;
+}
+
+function getSecret() {
+  var saved = settings.get("collectSecret", "");
+  if (saved) return saved;
+  var entered = dialogs.rawInput("第一次設定：請貼上你的 COLLECT_SECRET（跟 .env 裡的一致）", "");
+  var secret = entered ? entered.trim() : "";
+  if (secret) settings.put("collectSecret", secret);
+  return secret;
+}
+
+var BACKEND_URL = getBackendUrl();
+var COLLECT_SECRET = getSecret();
+
+// 「設定」按鈕呼叫這兩個函式重新輸入，預填目前的值方便對照/微調，不用
+// 每次都整串重打。用 var 宣告的 BACKEND_URL/COLLECT_SECRET 在整份腳本
+// 同一個作用域，這裡直接重新賦值，其他函式（submitCollect 等）下次呼叫
+// 就會讀到新值，不用重開腳本。
+function reconfigureBackendUrl() {
+  var entered = dialogs.rawInput("重新設定後端網址（含 /collect）：", settings.get("backendUrl", ""));
+  if (!entered) return;
+  BACKEND_URL = entered.trim().replace(/\/+$/, "");
+  settings.put("backendUrl", BACKEND_URL);
+  toastLog("後端網址已更新");
+}
+
+function reconfigureSecret() {
+  var entered = dialogs.rawInput("重新設定 COLLECT_SECRET：", settings.get("collectSecret", ""));
+  if (!entered) return;
+  COLLECT_SECRET = entered.trim();
+  settings.put("collectSecret", COLLECT_SECRET);
+  toastLog("COLLECT_SECRET 已更新");
+}
+
 // 開了之後，收集成功會順便通知到 .env 裡設定的 Discord 頻道（後端既有的
 // post_announcement 功能，跟 likewatcher.user.js 的公告開關是同一套邏輯）。
 // 不用改程式碼，畫面上「公告」那顆懸浮按鈕點一下就能切換，狀態存在本機
 // （storages），重開腳本也記得。預設關閉。
-var settings = storages.create("autojs_collect");
 var ANNOUNCE_ENABLED = settings.get("announceEnabled", false);
 
 // 主控台預設隱藏，不會擋畫面——長按下面那顆懸浮按鈕可以隨時切換顯示/隱藏，
@@ -89,6 +141,7 @@ var window = floaty.window(
   <vertical gravity="left|top">
     <button id="collect" text="抓" w="36" h="36" textSize="10sp" style="Widget.AppCompat.Button.Colored"/>
     <button id="announce" text="公告" w="36" h="36" textSize="9sp"/>
+    <button id="config" text="設定" w="36" h="36" textSize="9sp"/>
   </vertical>
 );
 // 用螢幕比例定位，不用「device.width - 固定像素」——按鈕大小是 dp、
@@ -108,6 +161,15 @@ window.announce.click(function () {
   settings.put("announceEnabled", ANNOUNCE_ENABLED);
   updateAnnounceButtonText();
   toastLog("收集成功時通知 Discord：" + (ANNOUNCE_ENABLED ? "開" : "關"));
+});
+
+// 「設定」按鈕：重新設定後端網址/密鑰用，跟 likewatcher.user.js 選單裡的
+// 「重新設定後端網址」「重新設定 COLLECT_SECRET」是同一件事，AutoJs6 沒有
+// 瀏覽器分頁那種選單列可以掛，改成浮動按鈕 + 選單對話框達成一樣的效果。
+window.config.click(function () {
+  var idx = dialogs.select("重新設定", ["後端網址（含 /collect）", "COLLECT_SECRET"]);
+  if (idx === 0) reconfigureBackendUrl();
+  else if (idx === 1) reconfigureSecret();
 });
 
 // 自己接管觸控事件，同時支援三種手勢：
