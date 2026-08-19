@@ -142,21 +142,10 @@ window.collect.setOnTouchListener(function (view, event) {
 // 平常主要靠觸控事件觸發，備援輪詢間隔拉得夠長不會造成卡頓感。
 var likedSeen = {}; // key: 按鈕座標, value: 上次看到是不是已按讚（boolean）
 
-events.observeTouch();
-events.onTouch(function (point) {
-  threads.start(function () {
-    try {
-      if (currentPackage() === "com.twitter.android") {
-        sleep(200); // 給畫面一點時間反應按讚動畫/狀態更新，太快讀到舊狀態
-        watchLikes(point);
-      }
-    } catch (e) {
-      log("觸控偵測出錯：" + e);
-      toastLog("觸控偵測出錯：" + e);
-    }
-  });
-});
-
+// 備援輪詢一定要先啟動、且不能被下面的觸控事件設定拖累——如果
+// events.observeTouch()/onTouch() 呼叫本身就丟例外（設定階段失敗，不在
+// 我們自己包的 try/catch 範圍內），會讓腳本從那一行以下全部停止執行，
+// 這個輪詢執行緒如果寫在後面就永遠不會啟動。所以先讓它獨立跑起來。
 var FALLBACK_POLL_MS = 8000;
 threads.start(function () {
   while (true) {
@@ -171,6 +160,29 @@ threads.start(function () {
     }
   }
 });
+
+// 觸控事件設定本身包一層 try/catch——這個 API 能不能穩定運作還沒把握，
+// 設定失敗就跳提示、直接退回純靠上面那個備援輪詢運作，不要讓失敗拖垮
+// 整支腳本。
+try {
+  events.observeTouch();
+  events.onTouch(function (point) {
+    threads.start(function () {
+      try {
+        if (currentPackage() === "com.twitter.android") {
+          sleep(200); // 給畫面一點時間反應按讚動畫/狀態更新，太快讀到舊狀態
+          watchLikes(point);
+        }
+      } catch (e) {
+        log("觸控偵測出錯：" + e);
+        toastLog("觸控偵測出錯：" + e);
+      }
+    });
+  });
+} catch (e) {
+  log("觸控事件監聽設定失敗，改用純輪詢：" + e);
+  toastLog("觸控事件監聽設定失敗，改用純輪詢：" + e);
+}
 
 function isLikedDesc(desc) {
   return /已按讚|取消讚|已喜歡|取消喜歡|Liked|Unlike/.test(desc || "");
