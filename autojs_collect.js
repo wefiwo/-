@@ -11,12 +11,14 @@
 //      的無障礙服務打開（這就是能背景監看畫面的必要授權，md 檔提過的
 //      那個「可讀取螢幕所有內容」警告是這步驟本身，不是這支腳本額外要的）。
 //
-// 運作方式：背景每 700ms 掃一次目前螢幕上的讚按鈕狀態，跟上一次掃到的
-// 狀態比對——如果某個讚按鈕從「未按」變成「已按」，就當作剛剛按讚，自動
-// 觸發：找同一排的分享按鈕 → 點分享 → 點複製連結 → 讀剪貼簿拿網址 → 選
-// photo/video → 把抓到的畫面文字直接送給後端比對 hashtags.json（跟
-// likewatcher.user.js 同一套邏輯，後端自己判斷角色）。比對到角色就全自動
-// 結束；比對不到才跳出對話框讓你手動補打角色名稱重送一次。
+// 運作方式：用 events.onTouch() 監聽真正的觸控動作（事件觸發，不是固定
+// 秒數輪詢）——你點螢幕的當下，才去檢查那個點附近有沒有剛好是讚按鈕、
+// 狀態是不是從「未按」變「已按」。是的話自動觸發：找同一排的分享按鈕 →
+// 點分享 → 點複製連結 → 讀剪貼簿拿網址 → 選 photo/video → 把抓到的畫面
+// 文字（只抓這篇貼文卡片範圍內，避免混到鄰篇）送給後端比對 hashtags.json
+// （跟 likewatcher.user.js 同一套邏輯，後端自己判斷角色）。比對到角色就
+// 全自動結束；比對不到才跳出對話框讓你手動補打角色名稱重送一次。另外留
+// 一個 8 秒一次的低頻全畫面備援輪詢，防觸控事件萬一漏接。
 //
 // 已知限制／這是「先射箭再畫靶」的第一版，跟以前調 IG/FB 網頁版是同一套
 // 流程——先讓你實際操作、把 log() 印出來的內容回報，再照實際文字調整：
@@ -40,8 +42,6 @@
 // ---- 設定：改成你自己的值 ----
 var BACKEND_URL = "https://BoboboboB.pythonanywhere.com/collect";
 var COLLECT_SECRET = "填入你 .env 裡 COLLECT_SECRET 的值";
-var POLL_MS = 1500; // 拉長間隔減少滑動時的卡頓感；沒查到有把握的「監聽點擊」API
-                     // 可以真正做到事件觸發，先用調高輪詢間隔這個穩妥做法
 
 // 主控台預設隱藏，不會擋畫面——長按下面那顆懸浮按鈕可以隨時切換顯示/隱藏，
 // 平常靠 toastLog() 的小提示就夠了，隱不隱藏都不影響腳本邏輯（log 照樣有記錄）。
@@ -113,20 +113,41 @@ window.collect.setOnTouchListener(function (view, event) {
   return false;
 });
 
-// ---- 背景自動偵測按讚 ----
-var likedSeen = {}; // key: 按鈕座標, value: 上次看到的 desc 文字
+// ---- 自動偵測按讚：改成「有人點螢幕才檢查」，不是固定秒數全螢幕掃描 ----
+// events.onTouch() 是事件觸發（真的有觸控動作才會呼叫），不是輪詢——
+// 點下去之後只檢查「那個點附近」有沒有剛好是讚按鈕，不用每隔 X 秒把整個
+// 畫面所有讚按鈕都掃一遍。額外留一個很低頻率（8 秒一次）的全畫面備援輪詢，
+// 純粹防呆用（例如觸控事件萬一漏接、或用其他方式間接觸發按讚的情況），
+// 平常主要靠觸控事件觸發，備援輪詢間隔拉得夠長不會造成卡頓感。
+var likedSeen = {}; // key: 按鈕座標, value: 上次看到是不是已按讚（boolean）
 
-threads.start(function () {
-  while (true) {
+events.observeTouch();
+events.onTouch(function (point) {
+  threads.start(function () {
     try {
       if (currentPackage() === "com.twitter.android") {
-        watchLikes();
+        sleep(200); // 給畫面一點時間反應按讚動畫/狀態更新，太快讀到舊狀態
+        watchLikes(point);
       }
     } catch (e) {
-      log("watchLikes 發生錯誤：" + e);
-      toastLog("背景偵測出錯：" + e); // 主控台預設藏著，出錯一定要有 toast 才看得到
+      log("觸控偵測出錯：" + e);
+      toastLog("觸控偵測出錯：" + e);
     }
-    sleep(POLL_MS);
+  });
+});
+
+var FALLBACK_POLL_MS = 8000;
+threads.start(function () {
+  while (true) {
+    sleep(FALLBACK_POLL_MS);
+    try {
+      if (currentPackage() === "com.twitter.android") {
+        watchLikes(null);
+      }
+    } catch (e) {
+      log("備援輪詢出錯：" + e);
+      toastLog("備援輪詢出錯：" + e);
+    }
   }
 });
 
@@ -148,9 +169,14 @@ function isLiked(btn, desc) {
   return isLikedDesc(desc);
 }
 
-function watchLikes() {
+// point 有給的話（觸控事件觸發時）只處理「觸控點落在按鈕範圍內」的那顆，
+// 不用檢查畫面上其他讚按鈕；point 是 null 時（備援輪詢）維持全部檢查。
+function watchLikes(point) {
   var buttons = descMatches(/^(讚|Like|已按讚|取消讚|喜歡|已喜歡|取消喜歡|Liked|Unlike)$/).find();
   buttons.forEach(function (btn) {
+    if (point && !boundsContainsPoint(btn.bounds(), point)) {
+      return;
+    }
     var key = btn.bounds().toShortString();
     var desc = btn.desc();
     var wasLiked = !!likedSeen[key];
@@ -161,6 +187,11 @@ function watchLikes() {
       handleNewLike(btn);
     }
   });
+}
+
+// 不確定 Rect 物件是否有現成的 contains() 方法可用，自己手動比較邊界比較保險。
+function boundsContainsPoint(b, point) {
+  return point.x >= b.left && point.x <= b.right && point.y >= b.top && point.y <= b.bottom;
 }
 
 function handleNewLike(likeBtn) {
