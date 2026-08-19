@@ -246,7 +246,7 @@ function findTweetContainer(anchorBtn) {
   var node = anchorBtn.parent();
   var candidate = node;
   for (var hops = 0; hops < 10 && node; hops++) {
-    if (node.bounds().height() > device.height() * 0.75) {
+    if (node.bounds().height > device.height * 0.75) {
       break;
     }
     candidate = node;
