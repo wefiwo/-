@@ -13,12 +13,14 @@
 //
 // 運作方式：用 events.onTouch() 監聽真正的觸控動作（事件觸發，不是固定
 // 秒數輪詢）——你點螢幕的當下，才去檢查那個點附近有沒有剛好是讚按鈕、
-// 狀態是不是從「未按」變「已按」。是的話自動觸發：找同一排的分享按鈕 →
-// 點分享 → 點複製連結 → 讀剪貼簿拿網址 → 選 photo/video → 把抓到的畫面
-// 文字（只抓這篇貼文卡片範圍內，避免混到鄰篇）送給後端比對 hashtags.json
-// （跟 likewatcher.user.js 同一套邏輯，後端自己判斷角色）。比對到角色就
-// 全自動結束；比對不到才跳出對話框讓你手動補打角色名稱重送一次。另外留
-// 一個 8 秒一次的低頻全畫面備援輪詢，防觸控事件萬一漏接。
+// 狀態是不是從「未按」變「已按」。是的話自動觸發：先抓這篇貼文卡片範圍內
+// 的內文（避免混到鄰篇）跟自動判斷 photo/video 類型 → 找同一排的分享按鈕 →
+// 點分享 → 點複製連結 → 讀剪貼簿拿網址 → 把抓到的內文送給後端比對
+// hashtags.json（跟 likewatcher.user.js 同一套邏輯，後端自己判斷角色）。
+// 內文比對到角色、媒體類型也判斷得出來的話就全自動結束；媒體類型判斷不出來
+// 才跳對話框讓你手動選一次，內文沒比對到角色才跳對話框讓你手動補打角色
+// 名稱重送一次，兩者互不相關、各自只在真的需要時才問。另外留一個 3 秒一次
+// 的低頻全畫面備援輪詢，防觸控事件萬一漏接。
 //
 // 已知限制／這是「先射箭再畫靶」的第一版，跟以前調 IG/FB 網頁版是同一套
 // 流程——先讓你實際操作、把 log() 印出來的內容回報，再照實際文字調整：
@@ -27,12 +29,37 @@
 //   - 分享按鈕改成「讚按鈕同一排工具列（留言/轉發/讚/收藏/分享）裡最右邊
 //     那顆可點擊元件」來定位，不再用文字比對找分享按鈕——實測發現用「分享」
 //     這個字去找，畫面上不只一處符合，會抓錯，改抓位置比較準。
-//   - 內文（caption）目前是把整個畫面看得到的文字全部串起來，很粗糙。
 //   - 只做 X。IG/FB 原生 App 畫面結構、選單文字都不同，等 X 這條路先
 //     跑通、抓到實際除錯方法後再比照擴充。
-//   - 在快速滑動的時間軸上同時有好幾個讚按鈕在畫面上時，用「按鈕在螢幕
-//     上的座標」當識別依據，滑動換頁後座標重複使用可能誤判，目前沒有
-//     更精準的做法（原生 App 沒有 URL 這種穩定 ID 可以拿來認貼文）。
+//
+// v2 更新（照第一版實測錄影抓到的三個具體問題重寫，見各函式內註解）：
+//   - 內文/媒體類型「點分享之前」就先抓好，不再等分享選單開了又關之後
+//     才用舊的按鈕節點往上爬——這段期間畫面重新佈局，事後抓到的常常是
+//     已經漂移過的內容（見下一條）。
+//   - 容器邊界判斷實測會一次跨過不只一篇貼文：錄影裡看到同一次抓到的
+//     「畫面文字」把三篇不同貼文的統計數字/作者名混在一起（剛好那次因為
+//     目標貼文自己的 hashtag 還在混進來的文字裡，比對照樣成功，純粹運氣
+//     好，換一篇可能就比對到鄰篇貼文的角色去）。改成「讚按鈕數量」和
+//     「大頭貼數量」兩個訊號任一個先觸發就停止爬升，且爬升上限收緊，
+//     同時內文優先直接讀容器節點自己的 contentDescription（X 為了螢幕
+//     報讀本來就會在貼文卡片整體放一段完整描述，範圍天生就卡在單篇貼文，
+//     比自己東拼西湊 TextView 準；讀不到才退回原本的「把容器內所有
+//     TextView 文字串起來」）。
+//   - 「類型」對話框原本每次都強制跳出，即使自動比對角色成功也要先手動
+//     選 photo/video 才會送出，等於整條路徑其實從沒真正全自動過。改成
+//     先看貼文有沒有時長徽章（"0:12" 這種 分:秒 格式短文字，或 GIF
+//     徽章）判斷是不是影片，兩者都沒有但有圖才判斷是照片；真的兩者都
+//     判斷不出來（理論上不該發生）才退回手動對話框當備援。
+//   - `likedSeen` 原本純用按鈕螢幕座標當 key——但 RecyclerView 列表項目
+//     本來就會回收、座標重複使用是常態，滑動幾下就可能讓「上一篇滑走的
+//     貼文的已讚狀態」被誤當成「這篇貼文本來就已經按過」（或反過來，
+//     漏判新讚）。改成每次全畫面輪詢時，用「這一輪畫面上實際還看得到的
+//     按鈕」修剪掉已經不在畫面上的舊紀錄，把座標碰撞的時間窗縮小到單一
+//     輪詢間隔內，不會整個 session 累積下去。
+//   - 這一輪修改是照錄影裡實際觀察到的現象重寫的，不是靠新一輪的節點
+//     結構 dump 精準定位——contentDescription 抓法、時長徽章判斷法能不能
+//     完全對上你這版 X App 的實際畫面結構，還是要靠你實際跑一輪、把
+//     log() 內容回報回來才能確認，抓不準的地方之後再照實測結果回頭調。
 // ============================================================
 
 // 注意：不要在檔案開頭加 "ui";——加了會讓這支腳本自己佔用一個空白 Activity，
@@ -223,6 +250,20 @@ function watchLikes(point) {
   watchLock.lock();
   try {
     var buttons = descMatches(LIKE_BUTTON_PATTERN).find();
+    // RecyclerView 列表項目本來就會回收、螢幕座標重複使用是常態，滑動
+    // 幾下就可能讓「上一篇滑走的貼文的已讚狀態」被誤當成「這篇貼文本來
+    // 就已經按過」（或反過來漏判新讚）。只在全畫面輪詢（point 為 null）
+    // 時，用「這一輪畫面上實際還看得到的按鈕」修剪掉已經不在畫面上的
+    // 舊紀錄——把座標碰撞的時間窗縮小到單一輪詢間隔內，不會整個 session
+    // 累積下去。觸控事件觸發的那次不做這件事，避免每次點擊都清一輪、
+    // 反而把備援輪詢原本追蹤到一半的狀態沖掉。
+    if (!point) {
+      var currentKeys = {};
+      buttons.forEach(function (btn) { currentKeys[btn.bounds().toShortString()] = true; });
+      Object.keys(likedSeen).forEach(function (k) {
+        if (!currentKeys[k]) delete likedSeen[k];
+      });
+    }
     buttons.forEach(function (btn) {
       if (point && !boundsContainsPoint(btn.bounds(), point)) {
         return;
@@ -254,7 +295,9 @@ function handleNewLike(likeBtn) {
     logVisibleDescs();
     return;
   }
-  runShareFlow(shareBtn, "剛剛按讚的貼文");
+  // likeBtn 一路傳進去當內文/媒體類型的錨點——分享鍵只用來點分享選單，
+  // 不再拿它去爬容器（見 runShareFlow 開頭的說明）。
+  runShareFlow(likeBtn, shareBtn, "剛剛按讚的貼文");
 }
 
 // 手動備用按鈕：畫面上隨便找一個讚按鈕，用同一套「同排最右邊」邏輯定位分享鍵
@@ -272,7 +315,7 @@ function collectFromShareFlow() {
     logVisibleDescs();
     return;
   }
-  runShareFlow(shareBtn, "目前畫面的貼文");
+  runShareFlow(likeBtn, shareBtn, "目前畫面的貼文");
 }
 
 // 分享按鈕不是靠文字找（畫面上不只一個地方帶有「分享」相關文字，之前抓錯過），
@@ -291,16 +334,33 @@ function findShareButtonNearLike(likeBtn) {
 }
 
 // 滑動時螢幕上常同時有兩篇貼文，抓內文如果掃整個畫面會把鄰篇的 hashtag 也
-// 混進來，導致比對到錯的角色。原本用「高度是否接近整個螢幕」當邊界，實測
-// 會爬過頭、抓到下一篇貼文的內容——改成更準的判斷：一篇貼文正常只會有
-// 一個讚按鈕，往上爬的時候只要這層範圍內出現「不只一個讚按鈕」，就代表
-// 已經跨到別篇貼文了，停在上一層（還只有一個讚按鈕那層）。
-function findTweetContainer(anchorBtn) {
-  var node = anchorBtn.parent();
+// 混進來，導致比對到錯的角色。原本只看「這層範圍內出現不只一個讚按鈕」
+// 一個訊號，實測會一次爬過頭、跨進兩三篇貼文都沒觸發（X 的畫面結構每爬
+// 一層父層涵蓋的範圍常常不是線性放大，可能一口氣就跳過中間該停的那層）。
+// 改成「讚按鈕數量」跟「大頭貼數量」兩個訊號任一個先偵測到「這層不只一篇
+// 貼文」就停，且把爬升上限從 10 收緊到 6——就算兩個訊號都沒觸發，最壞情況
+// 混進來的內容範圍也比較小。
+function countAvatarsInside(node) {
+  var images = node.find(className("android.widget.ImageView"));
+  var count = 0;
+  images.forEach(function (img) {
+    var b = img.bounds();
+    var w = b.width(), h = b.height();
+    // 大頭貼是正方形小圖示，用長寬幾乎相等 + 大小合理來篩，排除版面裡
+    // 其他細長條/超小的裝飾用 ImageView。
+    if (w > 20 && Math.abs(w - h) < 10) {
+      count++;
+    }
+  });
+  return count;
+}
+
+function findTweetContainer(likeBtn) {
+  var node = likeBtn.parent();
   var candidate = node;
-  for (var hops = 0; hops < 10 && node; hops++) {
+  for (var hops = 0; hops < 6 && node; hops++) {
     var likeButtonsInside = node.find(descMatches(LIKE_BUTTON_PATTERN));
-    if (likeButtonsInside.length > 1) {
+    if (likeButtonsInside.length > 1 || countAvatarsInside(node) > 1) {
       break; // 這層已經跨到不只一篇貼文，用上一層（candidate）就好
     }
     candidate = node;
@@ -309,10 +369,61 @@ function findTweetContainer(anchorBtn) {
   return candidate;
 }
 
-// 共用：點分享 → 複製連結 → 讀剪貼簿 → 跳出確認對話框 → 送出。
+// 內文抓取：優先看容器節點自己有沒有現成的 contentDescription——X 為了
+// 螢幕報讀，通常會在貼文卡片整體那層節點放一段完整描述（作者、內文、
+// 統計數字全部串好），範圍天生就卡在單篇貼文，比自己爬子節點拼湊準得多，
+// 也不會漏抓因捲動被裁切、需要另外展開的內容。讀不到（沒設定/太短，
+// 太短代表可能抓到的是別的無關節點而不是整篇卡片）才退回舊做法：把容器
+// 內所有 TextView 文字串起來——這個退路仍然可能混進邊界誤判的內容，只是
+// findTweetContainer 已經盡量把邊界收緊了。
+function extractCaption(container) {
+  if (!container) return "";
+  var ownDesc = container.desc();
+  if (ownDesc && ownDesc.length > 15) {
+    return ownDesc;
+  }
+  return container.find(className("android.widget.TextView"))
+    .map(function (n) { return n.text(); })
+    .filter(Boolean)
+    .join(" / ");
+}
+
+// 影片/照片自動判斷：媒體縮圖上，影片一定會疊一個時長徽章（"0:12" 這種
+// 分:秒 格式的短文字）或 GIF 徽章，照片不會有——這是介面本來就要給人看的
+// 資訊，比找 VideoView/ExoPlayer 這類自訂 View 的 class 名稱穩定（各版本
+// X App 常常換播放器元件、class 名稱不保證一樣）。兩種徽章都沒有、但容器
+// 裡至少找得到一張圖就當照片；連圖都找不到（理論上不該發生，能走到這裡
+// 代表已經偵測到讚，貼文應該都帶媒體）才回傳 null，讓呼叫端退回手動對話框。
+function detectMediaType(container) {
+  if (!container) return null;
+  var texts = container.find(className("android.widget.TextView")).map(function (n) { return n.text(); });
+  if (texts.some(function (t) { return /^\d{1,2}:\d{2}$/.test(t) || /^GIF$/i.test(t); })) {
+    return "video";
+  }
+  var descs = container.find(className("android.view.View")).map(function (n) { return n.desc(); }).filter(Boolean);
+  if (descs.some(function (d) { return /播放|^Play$|Video|影片/i.test(d); })) {
+    return "video";
+  }
+  if (container.find(className("android.widget.ImageView")).length > 0) {
+    return "photo";
+  }
+  return null;
+}
+
+// 共用：先抓內文/媒體類型 → 點分享 → 複製連結 → 讀剪貼簿 → 送出。
+// 內文跟媒體類型特意搬到「點分享之前」抓——分享選單開了又關這段期間
+// （點擊+動畫+複製連結，加起來將近 2 秒）畫面很容易重新佈局，事後才用
+// 按鈕節點往上爬，抓到的常常已經是漂移過的內容，不如在按讚當下、畫面
+// 還沒被分享選單打斷之前就先抓好。
 // 主控台預設就是隱藏的（見檔案開頭 console.hide()），這裡不用特別處理顯示/
 // 隱藏——想看過程 log 就長按浮動按鈕切換，不想看就讓它一直藏著。
-function runShareFlow(shareBtn, hint) {
+function runShareFlow(likeBtn, shareBtn, hint) {
+  var container = findTweetContainer(likeBtn);
+  var caption = extractCaption(container);
+  log("畫面文字（抓內文用，供你對照調整）：\n" + caption);
+  var mediaType = detectMediaType(container);
+  log("媒體類型自動判斷：" + (mediaType || "判斷不出來，等一下跳對話框讓你選"));
+
   shareBtn.click();
   sleep(1000);
 
@@ -335,15 +446,12 @@ function runShareFlow(shareBtn, hint) {
     return;
   }
 
-  var container = findTweetContainer(shareBtn);
-  var caption = (container ? container.find(className("android.widget.TextView")) : className("android.widget.TextView").find())
-    .map(function (n) { return n.text(); })
-    .filter(Boolean).join(" / ");
-  log("畫面文字（抓內文用，供你對照調整）：\n" + caption);
-
-  var typeIndex = dialogs.select("類型", ["photo", "video"]);
-  if (typeIndex === -1) { toastLog("已取消"); return; }
-  var mediaType = typeIndex === 0 ? "photo" : "video";
+  // 自動判斷不出媒體類型，才在這裡才跳對話框當備援——不是每次都問。
+  if (!mediaType) {
+    var typeIndex = dialogs.select("類型（自動判斷不出來，手動選一下）", ["photo", "video"]);
+    if (typeIndex === -1) { toastLog("已取消"); return; }
+    mediaType = typeIndex === 0 ? "photo" : "video";
+  }
 
   // 先把抓到的畫面文字整包當 text 送出，跟瀏覽器版 likewatcher.user.js 一樣，
   // 交給後端自己比對 hashtags.json——比對得到的話全自動，不用手動打角色。
