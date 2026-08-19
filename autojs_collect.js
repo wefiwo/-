@@ -105,6 +105,21 @@
 //   likedSeen，但 v3 已經沒有觸控事件那條路線，全部偵測都在同一個輪詢
 //   迴圈的同一條執行緒裡循序做，不會有並行讀寫的問題，留著那把鎖反而是
 //   保護一個已經不存在的競爭情境。
+//
+// v3.1 更新：v3 上線後實測抓到兩個問題，都是新架構自己的問題（不是猜座標
+//   那類）：
+//   (1) 腳本剛啟動時 likedSeen 是空的，畫面上任何本來就已經讚過的貼文，
+//       第一輪輪詢會被誤判成「從未讚變已讚」直接觸發，明明沒點任何東西
+//       卻跑出偵測。加上 isFirstPoll：第一輪只記錄目前狀態當基準值，不
+//       觸發收集，之後的輪詢才開始真的比對「有沒有變化」。
+//   (2) 同一則貼文被重複收集兩次：tweetIdentity() 抓不到 contentDescription
+//       時會退回拼接 TextView 文字，但這個拼接結果裡混進了讚數/留言數/
+//       瀏覽數這些統計數字——按讚這個動作本身就會讓讚數改變，於是「這則
+//       貼文」下一輪算出來的身分字串就變了（因為數字不一樣了），系統認不
+//       出是同一則、又重新觸發一次。加上 stripVolatileStats()，兩條身分
+//       計算路徑（contentDescription 跟拼接文字）都先濾掉純數字片段
+//       （可能帶千分位逗號/萬/K 這類單位）再拿去當身分，只留真正描述貼文
+//       內容的文字。
 // ============================================================
 
 // 注意：不要在檔案開頭加 "ui";——加了會讓這支腳本自己佔用一個空白 Activity，
@@ -347,29 +362,50 @@ function runCollectLocked(btn) {
   }
 }
 
+// 讚數/轉推數/留言數/瀏覽數這些統計數字不能算進身分字串裡——按讚這個
+// 動作本身就會讓讚數改變（例如 45→46），如果數字被算進身分，同一則貼文
+// 光是「被按讚」這個動作，下一輪輪詢算出來的身分字串就會變成不同的字串
+// （因為讚數變了），系統認不出「這是同一則貼文」，會當成一則全新貼文、
+// 現在剛好是已讚狀態，又重新觸發一次——實測就是這樣重複收集同一則貼文
+// 兩次的成因。用正則把「純數字（可能帶千分位逗號/小數點/萬/K 這類單位）」
+// 的片段整個拿掉，只留下真正描述貼文內容的文字。用 \b 開頭確保不會誤傷
+// 「C108」這種數字前面緊接著字母的識別碼（字母跟數字之間沒有單字邊界，
+// 不會被這個正則命中）。
+function stripVolatileStats(s) {
+  return s.replace(/\b\d[\d,]*(\.\d+)?\s*(萬|万|K|k)?\b/g, "");
+}
+
 // 這則貼文的「內容身分」，取代原本用螢幕座標當 likedSeen 的 key——螢幕
 // 座標會被 RecyclerView 回收、不同貼文重複使用，內容不會。優先用容器節點
 // 自己的 contentDescription（findTweetContainer()/extractCaption() 已經
 // 在用的同一份東西，這裡再呼叫一次省得另外傳遞，多一點點運算量換來身分
 // 跟座標完全無關，值得）；抓不到才退回拼接文字，一樣是內容而不是座標，
-// 只是不像 contentDescription 那麼精確。真的完全抓不到內容（理論上不該
-// 發生）就回傳 null，呼叫端會直接跳過這顆按鈕、留到下一輪輪詢再試，不會
-// 因為算不出身分就誤觸發或誤判。
+// 只是不像 contentDescription 那麼精確。兩條路徑都先過 stripVolatileStats()
+// 濾掉統計數字。真的完全抓不到內容（理論上不該發生）就回傳 null，呼叫端
+// 會直接跳過這顆按鈕、留到下一輪輪詢再試，不會因為算不出身分就誤觸發。
 function tweetIdentity(btn) {
   var container = findTweetContainer(btn);
   if (!container) return null;
   var desc = container.desc();
-  if (desc && desc.length > 5) return "d:" + desc;
+  if (desc && desc.length > 5) return "d:" + stripVolatileStats(desc);
   var texts = container.find(className("android.widget.TextView"))
     .map(function (n) { return n.text(); })
     .filter(Boolean)
     .join("|");
+  texts = stripVolatileStats(texts);
   return texts ? "t:" + texts : null;
 }
 
 // 主要偵測機制：每 POLL_MS 直接掃一次畫面上現有的讚按鈕，用 tweetIdentity()
 // 記住的「上次看到的狀態」比對出誰的狀態從「未按」變「已按」——不靠猜觸控
 // 座標對應哪顆按鈕，見檔案開頭 v3 更新的說明。
+//
+// isFirstPoll：腳本剛啟動時 likedSeen 是空的，這時畫面上任何「本來就已經
+// 讚過」的貼文都會被誤判成「從未讚變已讚」直接觸發——實測就是這樣一開始
+// 就跳出偵測，但根本沒點任何東西。第一輪輪詢改成只「記錄」目前看到的狀態
+// 當基準值，不觸發任何收集，之後才開始真的比對「有沒有變化」。
+var isFirstPoll = true;
+
 function watchLikes() {
   var buttons = descMatches(LIKE_BUTTON_PATTERN).find();
   var currentIds = {};
@@ -380,7 +416,7 @@ function watchLikes() {
     var wasLiked = !!likedSeen[id];
     var nowLiked = isLiked(btn, btn.desc());
     likedSeen[id] = nowLiked;
-    if (!wasLiked && nowLiked) {
+    if (!isFirstPoll && !wasLiked && nowLiked) {
       log("偵測到新的按讚：" + id.slice(0, 40) + "…（checked=" + (typeof btn.checked === "function" ? btn.checked() : "n/a") + "）");
       // 收集流程丟到獨立執行緒跑，不要卡在這個 forEach 裡——不然這一輪
       // 偵測要等收集流程跑完（可能好幾秒、可能還在等你選類型/打角色）
@@ -402,6 +438,7 @@ function watchLikes() {
   Object.keys(likedSeen).forEach(function (id) {
     if (!currentIds[id]) delete likedSeen[id];
   });
+  isFirstPoll = false;
 }
 
 function handleNewLike(likeBtn) {
