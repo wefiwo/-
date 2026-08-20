@@ -1,8 +1,10 @@
 // 抓圖BOT：原生 App 版收集腳本（Auto.js / AutoJs6 用）
 // ============================================================
-// 這個腳本跟 likewatcher.user.js 做同一件事（按讚就自動把貼文送進 /collect），
-// 但是用「無障礙服務背景監看畫面」取代「讀網頁 DOM + 監聽 click 事件」，讓
-// X 的原生 App（不是瀏覽器版網站）也能做到「按讚就收集」。
+// 這個腳本跟 likewatcher.user.js 一樣是「按讚就自動把貼文送進 /collect」，
+// 用「無障礙服務背景監看畫面」取代「讀網頁 DOM + 監聽 click 事件」，讓 X 的
+// 原生 App（不是瀏覽器版網站）也能做到這件事——但 v3.16 起，這支腳本
+// 「收集」的意思已經跟 likewatcher.user.js 不一樣了，見 v3.16 更新說明：
+// 只比對、只推播到 Discord，不會真的把貼文寫進收藏庫（collected.json）。
 //
 // 前置需求：
 //   1. Google Play 或 GitHub 裝「AutoJs6」（Auto.js 的維護分支，開源）。
@@ -13,13 +15,15 @@
 //
 // 運作方式（v3 重寫，見下面 v3 更新說明理由）：每 0.5 秒掃描一次目前畫面上
 // 看得到的讚按鈕，看誰的狀態從「未按」變「已按」——不靠猜你手指點在螢幕
-// 哪個座標。偵測到新的讚，自動觸發：先抓這篇貼文卡片範圍內的內文（避免
-// 混到鄰篇）跟自動判斷 photo/video 類型 → 找同一排的分享按鈕 → 點分享 →
-// 點複製連結 → 讀剪貼簿拿網址 → 把抓到的內文送給後端比對 hashtags.json
-// （跟 likewatcher.user.js 同一套邏輯，後端自己判斷角色）。內文比對到
-// 角色、媒體類型也判斷得出來的話就全自動結束；媒體類型判斷不出來才跳
-// 對話框讓你手動選一次，內文沒比對到角色才跳對話框讓你手動補打角色名稱
-// 重送一次，兩者互不相關、各自只在真的需要時才問。
+// 哪個座標。偵測到新的讚，先比對這則貼文的文字有沒有對到 hashtags.json
+// 關鍵字（v3.9 起加的門檻，見該版說明），對到才自動觸發：先抓這篇貼文卡片
+// 範圍內的內文（避免混到鄰篇）跟自動判斷 photo/video 類型 → 找同一排的
+// 分享按鈕 → 點分享 → 點複製連結 → 讀剪貼簿拿網址 → 把抓到的內文送給後端
+// 再比對一次 hashtags.json（跟 likewatcher.user.js 同一套邏輯，後端自己
+// 判斷角色）→ 比對到就推播到 Discord（v3.16 起不再寫入收藏庫，見該版
+// 說明）。內文比對到角色、媒體類型也判斷得出來的話就全自動結束；媒體類型
+// 判斷不出來才跳對話框讓你手動選一次，內文沒比對到角色才跳對話框讓你手動
+// 補打角色名稱重送一次，兩者互不相關、各自只在真的需要時才問。
 //
 // 已知限制／這是「先射箭再畫靶」的第一版，跟以前調 IG/FB 網頁版是同一套
 // 流程——先讓你實際操作、把 log() 印出來的內容回報，再照實際文字調整：
@@ -310,6 +314,31 @@
 //   唯一兩次實測真正驗證過有效的機制（設定按鈕、下滑通知欄）裡，唯一
 //   能用程式碼自動複製的一種。順便把間隔從 15 秒收緊到 8 秒，讓「等一下
 //   看會不會自動恢復」這個選項在實務測試上更可行。
+//
+// v3.16 更新（架構改變，不再寫入收藏庫）：v3.7～v3.15 這一長串修正，追的
+//   都是同一件事——無障礙服務讀 X 原生 App 畫面結構去判斷「這則貼文的範圍
+//   在哪裡」，始終不夠穩，一輪又一輪抓到新的邊界情況（引用貼文、嵌入卡片、
+//   多圖輪播……）。這條路徑一旦抓錯範圍，後果是把錯的內文/角色寫進收藏庫
+//   ——跟「沒反應、要重按」比起來是嚴重很多的失敗模式（收藏庫髒掉，不會
+//   自動發現，得靠 check_dead_links.py 之類事後才找得到）。改成「只比對、
+//   只推播，不要真的寫進收藏庫」：偵測到讚 + 比對到關鍵字，一樣要抓真實
+//   網址（分享/複製連結那段操作沒有省略，抓到的還是真的網址，不是憑空造
+//   的），但送給後端的 /collect 多帶一個 `save: false`——後端（app.py）
+//   一樣做完整的 hashtag 比對、一樣會推播到 Discord，只是不寫進
+//   collected.json。就算邊界判斷偶爾還是抓錯內容，頂多是推播訊息裡的角色
+//   比對錯，人一眼就看得出來，不會真的把錯資料寫進收藏庫——把這條路徑
+//   從「自動化收集」降級成「自動化通知，人工事後確認/收集」，用可靠性
+//   換掉一部分自動化程度。
+//   連帶影響：
+//   - submitCollect() 固定帶 save:false，不能關掉（這支腳本的存在目的
+//     已經整個改變，不是「偶爾要不要收藏」的選項）。
+//   - toast 文字從「已加入」改成「已推播」，符合實際發生的事。
+//   - ANNOUNCE_ENABLED 預設值從 false 改成 true——不寫入收藏庫之後，
+//     「推播到 Discord」是這支腳本唯一會發生的實際效果，預設關掉的話，
+//     剛裝好的腳本會讓人以為完全沒作用。已經存過偏好設定的人不受影響
+//     （settings.get 只在第一次、還沒存過值時才會用到這個新預設值）。
+//   - 手動「抓」按鈕、processedUrls 網址去重、keepalive 保活戳一下這些
+//     跟「有沒有寫入收藏庫」無關的機制全部維持不變。
 // ============================================================
 
 // 注意：不要在檔案開頭加 "ui";——加了會讓這支腳本自己佔用一個空白 Activity，
@@ -373,11 +402,16 @@ function reconfigureSecret() {
   toastLog("COLLECT_SECRET 已更新");
 }
 
-// 開了之後，收集成功會順便通知到 .env 裡設定的 Discord 頻道（後端既有的
-// post_announcement 功能，跟 likewatcher.user.js 的公告開關是同一套邏輯）。
-// 不用改程式碼，畫面上「公告」那顆懸浮按鈕點一下就能切換，狀態存在本機
-// （storages），重開腳本也記得。預設關閉。
-var ANNOUNCE_ENABLED = settings.get("announceEnabled", false);
+// 比對成功會通知到 .env 裡設定的 Discord 頻道（後端既有的 post_announcement
+// 功能，跟 likewatcher.user.js 的公告開關是同一套邏輯）。畫面上「公告」那顆
+// 懸浮按鈕點一下就能切換，狀態存在本機（storages），重開腳本也記得。
+//
+// v3.16 起預設改成開啟——這支腳本從 v3.16 開始不再把比對成功的貼文寫進
+// 收藏庫（見檔案開頭 v3.16 更新說明），「推播到 Discord」變成這支腳本
+// 唯一會發生的實際效果，預設關閉的話，一支「什麼都不會發生」的腳本剛裝好
+// 會讓人以為壞掉了。想暫時安靜（例如在測試/除錯，不想洗版）還是可以隨時
+// 點「公告」按鈕關掉。
+var ANNOUNCE_ENABLED = settings.get("announceEnabled", true);
 
 // 主控台預設隱藏，不會擋畫面——長按下面那顆懸浮按鈕可以隨時切換顯示/隱藏，
 // 平常靠 toastLog() 的小提示就夠了，隱不隱藏都不影響腳本邏輯（log 照樣有記錄）。
@@ -1076,9 +1110,13 @@ function runShareFlow(likeBtn, shareBtn, hint, allLikeButtons) {
 
   // 先把抓到的畫面文字整包當 text 送出，跟瀏覽器版 likewatcher.user.js 一樣，
   // 交給後端自己比對 hashtags.json——比對得到的話全自動，不用手動打角色。
+  // save:false（見 submitCollect()）：只比對、只推播，不寫進收藏庫，所以這裡
+  // 不再說「已加入」，改用「已推播」——實際有沒有真的推播到 Discord 還要看
+  // ANNOUNCE_ENABLED（「公告」按鈕）跟後端有沒有設定頻道，這裡只代表「比對
+  // 到角色、後端會嘗試推播」，不保證訊息真的送達。
   var result = submitCollect(url, mediaType, caption);
   if (result.addedTo.length > 0) {
-    toastLog("自動比對成功，已加入：" + result.addedTo.join("、"));
+    toastLog("自動比對成功，已推播：" + result.addedTo.join("、"));
     return;
   }
 
@@ -1088,7 +1126,7 @@ function runShareFlow(likeBtn, shareBtn, hint, allLikeButtons) {
   if (!character) { toastLog("已取消"); return; }
   var result2 = submitCollect(url, mediaType, "#" + character);
   if (result2.addedTo.length > 0) {
-    toastLog("已加入：" + result2.addedTo.join("、"));
+    toastLog("已推播：" + result2.addedTo.join("、"));
   } else {
     toastLog("還是沒比對到，狀態碼 " + result2.statusCode + "，回報 log 對一下 hashtags.json 裡的名字");
   }
@@ -1130,6 +1168,7 @@ function submitCollect(url, mediaType, text) {
     type: mediaType,
     text: text,
     announce: ANNOUNCE_ENABLED,
+    save: false, // v3.16：只比對、只推播，不要真的寫進收藏庫——見檔案開頭 v3.16 更新說明
   }, {
     headers: { "X-Collect-Secret": COLLECT_SECRET },
   });

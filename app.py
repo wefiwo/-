@@ -846,17 +846,34 @@ def collect():
     if not matched:
         return jsonify({"added_to": []})
 
-    data = load_collected()
-    added = []
-    for character in matched:
-        bucket = data.setdefault(character, [])
-        if not any(e["url"] == url for e in bucket):
-            bucket.append({
-                "url": url, "author": author, "type": media_type,
-                "added_at": datetime.now(timezone.utc).isoformat(),
-            })
-            added.append(character)
-    save_collected(data)
+    # save（選填，預設 true）：false 代表「只比對、只推播，不要真的寫進 collected.json」——
+    # autojs_collect.js（原生 App 版收集腳本）在多輪實測後放棄了它自己那條「爬分享按鈕→複製
+    # 連結→比對→寫入收藏庫」全自動收集鏈路（無障礙服務讀 X 原生 App 畫面結構的邊界判斷始終
+    # 不夠穩，見該檔案開頭 changelog），改成只要偵測到讚、且畫面文字比對到關鍵字，就把「抓到的
+    # 網址＋比對到的角色」推播到 Discord 讓人自己確認/事後手動收集，不再自動寫入收藏庫——這樣
+    # 就算邊界判斷偶爾抓到鄰篇內容，頂多是推播訊息裡角色比對錯，不會真的把錯資料寫進收藏庫，
+    # 大幅降低這條路徑寫壞資料的風險。網址還是要抓真的（不是憑空造的），所以這裡不能省略分享/
+    # 複製連結那段操作，只是最後一步從「寫入」換成「只推播」。likewatcher.user.js（瀏覽器版）
+    # 跟 Discord bot 都沒有這個問題（DOM 讀取/斜線指令輸入穩定得多），繼續用預設的 save=true。
+    save = body.get("save", True)
+
+    if save:
+        data = load_collected()
+        added = []
+        for character in matched:
+            bucket = data.setdefault(character, [])
+            if not any(e["url"] == url for e in bucket):
+                bucket.append({
+                    "url": url, "author": author, "type": media_type,
+                    "added_at": datetime.now(timezone.utc).isoformat(),
+                })
+                added.append(character)
+        save_collected(data)
+    else:
+        # 不寫入就沒有「同一個網址是否已經在某角色的 bucket 裡」這件事可比對去重——
+        # save=false 這個用途本來就是「每次比對到都推播讓人看一眼」，不是持久化收藏，
+        # 不需要、也沒有 collected.json 可以拿來去重，比對到的角色全部算數。
+        added = matched
 
     if added and body.get("announce"):
         # client-side opt-in flag (the userscript's own per-device toggle) — /collect itself

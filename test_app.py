@@ -74,6 +74,48 @@ class TestCollect(unittest.TestCase):
         self.assertIn("added_at", entry)
         datetime.fromisoformat(entry["added_at"])  # 格式要能被解析回去，壞掉這裡就會噴
 
+    def test_collect_save_false_matches_but_does_not_persist(self):
+        payload = {
+            "url": "https://x.com/artist/status/2",
+            "author": "artist",
+            "type": "photo",
+            "text": "look #YangyangXuanling fanart",
+            "save": False,
+        }
+        r = self.client.post("/collect", json=payload, headers={"X-Collect-Secret": "test-secret"})
+        self.assertEqual(r.get_json()["added_to"], ["秧秧"])
+        self.assertNotIn("秧秧", app_module.load_collected())  # 沒有寫進 collected.json
+
+    def test_collect_save_false_does_not_dedup_across_calls(self):
+        # save=false 沒有 collected.json 可以拿來判斷「這個網址是不是已經收藏過」——同一個網址
+        # 再送一次一樣會比對到、一樣會回報 added_to，不像 save=true 那樣第二次會變成空陣列。
+        payload = {
+            "url": "https://x.com/artist/status/3",
+            "author": "artist",
+            "type": "photo",
+            "text": "look #YangyangXuanling fanart",
+            "save": False,
+        }
+        headers = {"X-Collect-Secret": "test-secret"}
+        r1 = self.client.post("/collect", json=payload, headers=headers)
+        r2 = self.client.post("/collect", json=payload, headers=headers)
+        self.assertEqual(r1.get_json()["added_to"], ["秧秧"])
+        self.assertEqual(r2.get_json()["added_to"], ["秧秧"])
+
+    def test_collect_save_false_still_announces(self):
+        payload = {
+            "url": "https://x.com/artist/status/4",
+            "author": "artist",
+            "type": "photo",
+            "text": "look #YangyangXuanling fanart",
+            "save": False,
+            "announce": True,
+        }
+        with patch.object(app_module, "ANNOUNCE_CHANNEL_IDS", ["111"]), patch("app.requests.post") as mock_post:
+            r = self.client.post("/collect", json=payload, headers={"X-Collect-Secret": "test-secret"})
+        self.assertEqual(r.get_json()["added_to"], ["秧秧"])
+        mock_post.assert_called_once()
+
     def test_matched_characters_prefers_the_more_specific_alt_form_over_the_base_name(self):
         # 「秧秧・玄翎」的關鍵字天生就包含「秧秧」——貼文同時命中兩者時，只該算進比較明確的
         # 「秧秧・玄翎」，不該連基礎角色「秧秧」也一起算進去。
