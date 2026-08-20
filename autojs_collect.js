@@ -175,6 +175,28 @@
 //   跟著這次執行的生命週期，不用存到 storages——後端 /collect 本來就會
 //   用網址去重，跨執行階段的資料重複早就有伺服器那邊擋著，這裡要防的是
 //   同一次執行內白白把分享選單、手動輸入對話框又跑一次的浪費。
+//
+// v3.7 更新：實測抓到 findTweetBounds() 仍會把別篇貼文的內容當成目標貼文
+//   （例如螢幕上同時看得到兩篇貼文，點了上面那篇「Suoming｜鎖暝」的讚，
+//   結果抓到的卻是下面那篇的內容，導致比對/送出整個沒反應）。根因是 v3.4
+//   留下的已知風險——那則貼文自己的大頭貼一旦被捲出螢幕外找不到，上界會
+//   退回 0，等於「這則貼文的範圍」直接從螢幕最頂端算起，把螢幕上還看得到
+//   的其他貼文（不管在目標貼文上面還是下面，只要 Y 座標算出來落在 0～這顆
+//   讚按鈕之間）全部一起吃進去，抓內文/判斷身分自然抓到別篇去。
+//   加兩道修正：
+//   (1) 大頭貼比對門檻從「Y 中心 <= 讚按鈕 Y 中心」收緊成「Y 頂端 < 讚按鈕
+//       自己的 Y 頂端」——嚴格小於、且比的是讚按鈕整排的頂端而不是中心點，
+//       消除「大頭貼跟讚按鈕同高」這種邊界模糊地帶，把「大頭貼一定要在讚
+//       那一排上面」這條規則直接寫死成寫死的比較條件，不是猜出來的門檻。
+//   (2) 新增第二道獨立防線：findTweetBounds() 現在會拿到「這一輪畫面上
+//       全部讚按鈕」的清單，用「往上找最近的另一顆讚按鈕，取它的下緣」
+//       再收緊一次上界——螢幕由上而下線性排列，每則貼文只有一顆讚按鈕，
+//       所以「上一顆讚按鈕的下緣」到「這一顆讚按鈕的頂端」之間，最多只夾
+//       得下一則貼文的內容，這是版面順序保證的事實、不是猜測。就算這則
+//       貼文自己的大頭貼真的被捲出螢幕外（規則 1 退回 0），這道防線也會
+//       把上界重新收緊到「上一篇貼文結束的地方」，不會再往上多吃到別篇
+//       貼文的內容——兩道規則各自算出一個候選上界，取比較靠近讚按鈕（比較
+//       大）的那個生效。
 // ============================================================
 
 // 注意：不要在檔案開頭加 "ui";——加了會讓這支腳本自己佔用一個空白 Activity，
@@ -419,10 +441,10 @@ function isLiked(btn, desc) {
 // 一個慢不能拖累另一個快）。
 var collectLock = threads.lock();
 
-function runCollectLocked(btn) {
+function runCollectLocked(btn, allLikeButtons) {
   collectLock.lock();
   try {
-    handleNewLike(btn);
+    handleNewLike(btn, allLikeButtons);
   } finally {
     collectLock.unlock();
   }
@@ -453,8 +475,8 @@ function stripVolatileStats(s) {
 // 卻沒用上結果。拿掉這段純浪費效能的嘗試，直接用 bounds 過濾。理論上這則
 // 貼文自己一定會有一些文字（至少作者名），真的完全抓不到才回傳 null，
 // 呼叫端會直接跳過這顆按鈕、留到下一輪輪詢再試。
-function tweetIdentity(btn) {
-  var bounds = findTweetBounds(btn);
+function tweetIdentity(btn, allLikeButtons) {
+  var bounds = findTweetBounds(btn, allLikeButtons);
   var texts = className("android.widget.TextView").find()
     .filter(function (n) { return nodeInBounds(n, bounds); })
     .map(function (n) { return n.text(); })
@@ -478,7 +500,7 @@ function watchLikes() {
   var buttons = descMatches(LIKE_BUTTON_PATTERN).find();
   var currentIds = {};
   buttons.forEach(function (btn) {
-    var id = tweetIdentity(btn);
+    var id = tweetIdentity(btn, buttons);
     if (!id) {
       // 算不出身分代表這顆按鈕永遠不會被追蹤到——如果它剛好又是已讚狀態，
       // 就會變成「點了讚、但這顆按鈕從頭到尾沒被記錄過，也就永遠不會被
@@ -503,7 +525,7 @@ function watchLikes() {
       // 重蹈 v2.2 的覆轍。
       threads.start(function () {
         try {
-          runCollectLocked(btn);
+          runCollectLocked(btn, buttons);
         } catch (e) {
           log("收集流程發生錯誤：" + e);
           toastLog("收集流程出錯：" + e);
@@ -520,7 +542,7 @@ function watchLikes() {
   isFirstPoll = false;
 }
 
-function handleNewLike(likeBtn) {
+function handleNewLike(likeBtn, allLikeButtons) {
   var shareBtn = findShareButtonNearLike(likeBtn);
   if (!shareBtn) {
     toastLog("按讚偵測到了，但找不到同排最右邊的分享按鈕，回報目前畫面 log");
@@ -528,14 +550,18 @@ function handleNewLike(likeBtn) {
     return;
   }
   // likeBtn 一路傳進去當內文/媒體類型的錨點——分享鍵只用來點分享選單，
-  // 不再拿它去爬容器（見 runShareFlow 開頭的說明）。
-  runShareFlow(likeBtn, shareBtn, "剛剛按讚的貼文");
+  // 不再拿它去爬容器（見 runShareFlow 開頭的說明）。allLikeButtons 一路
+  // 傳進去給 findTweetBounds() 當第二道防線用（見 v3.7 更新說明）。
+  runShareFlow(likeBtn, shareBtn, "剛剛按讚的貼文", allLikeButtons);
 }
 
 // 手動備用按鈕：畫面上隨便找一個讚按鈕，用同一套「同排最右邊」邏輯定位分享鍵
-// （適合你人工點開單篇貼文詳細頁再按）。
+// （適合你人工點開單篇貼文詳細頁再按）。跟自動偵測路徑一樣，順手把畫面上
+// 目前看得到的「全部」讚按鈕一起抓下來，給 findTweetBounds() 的第二道防線用
+// ——手動這條路徑同樣可能發生螢幕上同時有兩篇貼文的情況，不應該少一層保護。
 function collectFromShareFlow() {
-  var likeBtn = descMatches(LIKE_BUTTON_PATTERN).findOne(2000);
+  var allLikeButtons = descMatches(LIKE_BUTTON_PATTERN).find();
+  var likeBtn = allLikeButtons[0];
   if (!likeBtn) {
     toastLog("畫面上找不到讚按鈕，回報目前畫面 log");
     logVisibleDescs();
@@ -547,7 +573,7 @@ function collectFromShareFlow() {
     logVisibleDescs();
     return;
   }
-  runShareFlow(likeBtn, shareBtn, "目前畫面的貼文");
+  runShareFlow(likeBtn, shareBtn, "目前畫面的貼文", allLikeButtons);
 }
 
 // 分享按鈕不是靠文字找（畫面上不只一個地方帶有「分享」相關文字，之前抓錯過），
@@ -593,16 +619,41 @@ function findAvatarNodes() {
 // 所在 Y 座標往上找最近的一顆大頭貼（這則貼文自己的），下界直接就是
 // 讚按鈕自己的上緣——工具列那排（含工具列本身、下面的讚數/轉推數/瀏覽數
 // 統計列、以及再更下面的下一則貼文）一律不看，只看「大頭貼到工具列之間」
-// 這一段，也就是作者名、內文、hashtag、媒體縮圖這些東西。找不到上面的
-// 大頭貼（這則貼文剛好在畫面最上面，大頭貼被捲出螢幕外）就用 0 當上界。
-function findTweetBounds(likeBtn) {
-  var likeY = (likeBtn.bounds().top + likeBtn.bounds().bottom) / 2;
+// 這一段，也就是作者名、內文、hashtag、媒體縮圖這些東西。
+//
+// allLikeButtons（v3.7 新增）：這一輪輪詢當下，畫面上看得到的「全部」讚
+// 按鈕（不只是這顆）——用來當第二道獨立防線，見下面規則 2 的說明跟檔案
+// 開頭 v3.7 更新的完整理由。呼叫端沒有這份清單（例如舊路徑手動觸發）就傳
+// undefined，這道防線自動跳過，退回只靠規則 1，不會整個炸掉。
+function findTweetBounds(likeBtn, allLikeButtons) {
+  var likeTop = likeBtn.bounds().top;
   var top = 0;
+
+  // 規則 1：這則貼文自己的大頭貼——大頭貼尺寸的圖片裡，Y 頂端最靠近讚
+  // 按鈕、但仍嚴格小於讚按鈕自己的 Y 頂端（不是中心點，也不是「小於等於」）
+  // 的那一顆。寫死成「大頭貼一定要比讚那一排的頂端還要上面」這條硬性比較
+  // 條件，不再用讚按鈕的中心點模糊比對。找不到（這則貼文剛好在畫面最
+  // 上面，大頭貼被捲出螢幕外）就維持 top = 0，交給規則 2 收緊。
   findAvatarNodes().forEach(function (img) {
     var ay = img.bounds().top;
-    if (ay <= likeY && ay > top) top = ay;
+    if (ay < likeTop && ay > top) top = ay;
   });
-  return { top: top, bottom: likeBtn.bounds().top };
+
+  // 規則 2：往上找最近的「另一顆讚按鈕」，取它的下緣當上界的第二個候選。
+  // 畫面由上而下線性排列、每則貼文只有一顆讚按鈕，所以「上一顆讚按鈕的
+  // 下緣」到「這一顆讚按鈕的頂端」之間，最多只夾得下一則貼文的內容——
+  // 這是版面順序保證的事實，不是猜測。就算規則 1 找不到大頭貼、退回 0，
+  // 這道防線也會把上界重新收緊到「上一篇貼文結束的地方」，不會再往上
+  // 多吃到別篇貼文的內容（v3.7 修的「點讚沒反應，實際抓到別篇貼文內容」
+  // 那個 bug 就是規則 1 單獨退回 0 時發生的）。兩個候選上界取比較靠近
+  // 讚按鈕（比較大）的那個生效。
+  (allLikeButtons || []).forEach(function (otherBtn) {
+    if (otherBtn === likeBtn) return;
+    var otherBottom = otherBtn.bounds().bottom;
+    if (otherBottom < likeTop && otherBottom > top) top = otherBottom;
+  });
+
+  return { top: top, bottom: likeTop };
 }
 
 // 節點的垂直中心點有沒有落在這則貼文自己的範圍內——不管容器節點往上爬
@@ -666,7 +717,7 @@ function detectMediaType(bounds) {
 // 還沒被分享選單打斷之前就先抓好。
 // 主控台預設就是隱藏的（見檔案開頭 console.hide()），這裡不用特別處理顯示/
 // 隱藏——想看過程 log 就長按浮動按鈕切換，不想看就讓它一直藏著。
-function runShareFlow(likeBtn, shareBtn, hint) {
+function runShareFlow(likeBtn, shareBtn, hint, allLikeButtons) {
   // BACKEND_URL/COLLECT_SECRET 沒設定好的話（第一次執行的輸入框被取消、
   // 或送出時是空字串——這兩種情況都不會存進 storages，見 getBackendUrl()/
   // getSecret()），不要先把整段點分享/複製連結/跳對話框都跑完才在最後
@@ -678,7 +729,7 @@ function runShareFlow(likeBtn, shareBtn, hint) {
     return;
   }
 
-  var bounds = findTweetBounds(likeBtn);
+  var bounds = findTweetBounds(likeBtn, allLikeButtons);
   var caption = extractCaption(bounds);
   log("畫面文字（抓內文用，供你對照調整）：\n" + caption);
   var mediaType = detectMediaType(bounds);
