@@ -207,6 +207,25 @@
 //   （console.show()/console.hide()）開一下立刻關掉，製造跟跳出設定對話框
 //   類似的視窗異動事件，不用你手動點按鈕。這是照這次實測回報推出的
 //   workaround，底層原因沒有進一步查證，效果要靠實機測試確認。
+//
+// v3.9 更新：實測抓到引用貼文（quote tweet）會一直跳針——螢幕截圖顯示，
+//   引用卡片裡顯示被引用貼文自己的互動數字（❤️180），這個「讚」字說明
+//   本身也會被 LIKE_BUTTON_PATTERN 比對到，混進 descMatches() 抓到的清單
+//   裡，但它只是唯讀的統計顯示，不是真的能點的讚按鈕——這顆多出來的節點
+//   讓 tweetIdentity() 在「真讚按鈕」跟「引用卡片的唯讀讚數」之間跳來跳去
+//   算出不同身分，就是跳針的根因之一。加上 .clickable() 篩掉這種唯讀節點
+//   （抽成共用的 findLikeButtons()，watchLikes()、collectFromShareFlow()
+//   都改用它，不要各寫一次篩選邏輯）。
+//   另外照使用者的要求，把觸發條件改嚴：改成「這則貼文的文字要先比對到
+//   hashtags.json 裡任何角色的關鍵字，而且剛好是這次按讚才觸發」，不再是
+//   只要按讚狀態有變化就一律觸發整套分享/複製連結/送出流程——隨手滑動時
+//   按到的、跟收藏完全無關的一般貼文，以前會整套跑一次（跑不出結果就跳
+//   手動輸入角色名稱的對話框），現在直接跳過，連 log 都不會印。跟
+//   likewatcher.user.js 的 loadHashtags()/matchedCharacters() 同一套邏輯、
+//   同一支後端 API（GET /hashtags）。這個關鍵字比對只影響「自動偵測」要
+//   不要觸發，手動「抓」按鈕（collectFromShareFlow()）不受影響，仍然是
+//   「不管有沒有比對到關鍵字，你人工按了就一定跑」，維持原本手動備援的
+//   彈性。
 // ============================================================
 
 // 注意：不要在檔案開頭加 "ui";——加了會讓這支腳本自己佔用一個空白 Activity，
@@ -455,6 +474,21 @@ threads.start(function () {
 // 讚按鈕的文字/描述模式，全檔共用同一份，不要各處各寫一次猜測的文字。
 var LIKE_BUTTON_PATTERN = /^(讚|Like|已按讚|取消讚|喜歡|已喜歡|取消喜歡|Liked|Unlike)$/;
 
+// 找畫面上目前「真正的」讚按鈕——只憑文字/描述比對（LIKE_BUTTON_PATTERN）
+// 不夠：引用貼文（quote tweet）卡片裡常常會顯示被引用貼文自己的互動數字
+// （❤️180 這種），那個「讚」字說明本身也會被 LIKE_BUTTON_PATTERN 比對到，
+// 但那顆節點只是唯讀的統計顯示，不是真的可以點的讚按鈕（實測抓到：畫面上
+// 同時混進一顆這種唯讀節點，讓 tweetIdentity()/likedSeen 在「真讚按鈕」跟
+// 「引用卡片的唯讀讚數」之間跳來跳去算出不同身分，就是「跳針」的根因之
+// 一）。加上 .clickable() 篩掉——真正的讚按鈕一定可以點，唯讀的統計顯示
+// 不行。watchLikes()、collectFromShareFlow() 都改用這個共用函式，不要各
+// 寫一次篩選邏輯。
+function findLikeButtons() {
+  return descMatches(LIKE_BUTTON_PATTERN).find().filter(function (n) {
+    return n.clickable();
+  });
+}
+
 function isLikedDesc(desc) {
   return /已按讚|取消讚|已喜歡|取消喜歡|Liked|Unlike/.test(desc || "");
 }
@@ -508,6 +542,48 @@ function stripVolatileStats(s) {
   return s.replace(/\b\d[\d,]*(\.\d+)?\s*(萬|万|K|k)?\b/g, "");
 }
 
+// ---- 關鍵字對照表：自動偵測要「先比對到關鍵字才觸發」用（見下面
+// textMatchesAnyHashtag()）----
+// 跟 likewatcher.user.js 的 loadHashtags()/matchedCharacters() 同一套邏輯、
+// 同一支後端 API（GET /hashtags，跟 /collect 同一個 base，不用另外設定）——
+// 不重新發明一套比對規則，維持跟 Discord /抓圖、瀏覽器版收集腳本三邊一致。
+// X 不用像 FB 一定要帶 #（那是 likewatcher.user.js 特有的規則，這裡只做
+// X），loose 比對：關鍵字只要以子字串形式出現在文字裡就算數。
+var HASHTAGS_CACHE = null;
+
+function loadHashtags() {
+  if (HASHTAGS_CACHE) return HASHTAGS_CACHE;
+  if (!BACKEND_URL) return null;
+  try {
+    var hashtagsUrl = BACKEND_URL.replace(/\/collect$/, "/hashtags");
+    var res = http.get(hashtagsUrl);
+    HASHTAGS_CACHE = JSON.parse(res.body.string());
+    log("已載入 hashtags 對照表，共 " + Object.keys(HASHTAGS_CACHE).length + " 個角色");
+  } catch (e) {
+    log("讀取 /hashtags 失敗，自動偵測這關會先擋住全部貼文（不知道要比對什麼）：" + e);
+    HASHTAGS_CACHE = null;
+  }
+  return HASHTAGS_CACHE;
+}
+loadHashtags(); // 開機先拉一次快取起來，watchLikes() 每次輪詢都要用，不要每次都重打一次 API
+
+// 這段文字有沒有比對到 hashtags.json 裡任何一個角色的任何一個關鍵字——
+// 只回傳有沒有比對到，不需要知道比對到哪個角色，那是後端 submitCollect()
+// 自己重比對一次的事（這裡的比對結果只用來決定要不要觸發，不會影響最後
+// 送出的角色判斷）。讀不到對照表（HASHTAGS_CACHE 是 null）就保守地當作
+// 沒比對到，不要在不知道要比對什麼的情況下亂觸發。
+function textMatchesAnyHashtag(text) {
+  var tags = loadHashtags();
+  if (!tags) return false;
+  // 中文輸入法常把 # 自動轉全形「＃」，跟 likewatcher.user.js 一樣先正規化掉。
+  var lower = (text || "").replace(/＃/g, "#").toLowerCase();
+  return Object.keys(tags).some(function (name) {
+    if (name.indexOf("_") === 0) return false; // hashtags.json 用 _ 開頭的 key 當註解，不是角色
+    var list = tags[name] || [];
+    return list.some(function (h) { return lower.indexOf(String(h).toLowerCase()) !== -1; });
+  });
+}
+
 // 這則貼文的「內容身分」，取代原本用螢幕座標當 likedSeen 的 key——螢幕
 // 座標會被 RecyclerView 回收、不同貼文重複使用，內容不會。直接拿「這則
 // 貼文垂直範圍內」（findTweetBounds()）的 TextView 拼接文字，過
@@ -542,7 +618,7 @@ function tweetIdentity(btn, allLikeButtons) {
 var isFirstPoll = true;
 
 function watchLikes() {
-  var buttons = descMatches(LIKE_BUTTON_PATTERN).find();
+  var buttons = findLikeButtons();
   var currentIds = {};
   buttons.forEach(function (btn) {
     var id = tweetIdentity(btn, buttons);
@@ -563,7 +639,20 @@ function watchLikes() {
     var nowLiked = isLiked(btn, btn.desc());
     likedSeen[id] = nowLiked;
     if (!isFirstPoll && !wasLiked && nowLiked) {
-      log("偵測到新的按讚：" + id.slice(0, 40) + "…（checked=" + (typeof btn.checked === "function" ? btn.checked() : "n/a") + "）");
+      // 先比對這則貼文的文字有沒有對到 hashtags.json 裡任何角色的關鍵字，
+      // 對不到就直接跳過，不觸發整套分享/複製連結/送出流程——之前是「只要
+      // 按讚狀態有變化就一律觸發」，隨手滑動按到的引用貼文、跟收藏完全
+      // 無關的一般貼文，也會整套跑一次（跑不出結果就跳手動輸入角色名稱
+      // 的對話框，或者像引用貼文那樣邊界算不準、反覆判斷成「新的讚」，
+      // 一直跳針洗 log）。likedSeen[id] 上面已經記過這輪是已讚狀態了，
+      // 之後同一個 id 不會再被判斷成「有變化」，這裡跳過不會讓同一則貼文
+      // 每輪都重新比對一次關鍵字。
+      var bounds = findTweetBounds(btn, buttons);
+      var quickText = extractCaption(bounds);
+      if (!textMatchesAnyHashtag(quickText)) {
+        return;
+      }
+      log("偵測到新的按讚，且對到關鍵字：" + id.slice(0, 40) + "…（checked=" + (typeof btn.checked === "function" ? btn.checked() : "n/a") + "）");
       // 收集流程丟到獨立執行緒跑，不要卡在這個 forEach 裡——不然這一輪
       // 偵測要等收集流程跑完（可能好幾秒、可能還在等你選類型/打角色）
       // 才能回到迴圈頂端繼續下一輪 POLL_MS，等於偵測被收集流程拖慢，
@@ -605,7 +694,7 @@ function handleNewLike(likeBtn, allLikeButtons) {
 // 目前看得到的「全部」讚按鈕一起抓下來，給 findTweetBounds() 的第二道防線用
 // ——手動這條路徑同樣可能發生螢幕上同時有兩篇貼文的情況，不應該少一層保護。
 function collectFromShareFlow() {
-  var allLikeButtons = descMatches(LIKE_BUTTON_PATTERN).find();
+  var allLikeButtons = findLikeButtons();
   var likeBtn = allLikeButtons[0];
   if (!likeBtn) {
     toastLog("畫面上找不到讚按鈕，回報目前畫面 log");
