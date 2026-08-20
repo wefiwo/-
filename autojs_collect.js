@@ -244,6 +244,22 @@
 //   一定緊接在上一則貼文結束處之後、且一定畫在任何嵌入卡片的大頭貼之前
 //   （由上而下渲染，外層一定先畫），取「最上面」才會選到正確的那顆，不會
 //   再被嵌入卡片的大頭貼卡住。
+//
+// v3.11 更新：v3.10 上線後實測回報「完全用不了」，重新從頭檢查全部功能，
+//   認為 v3.9 新加的兩個「沒有實機證據支持、失敗時會靜默擋住整個功能」的
+//   假設最可疑，兩個都改成安全的失敗模式：
+//   (1) findLikeButtons() 的 .clickable() 篩選拿掉——當初理由是濾掉引用
+//       卡片裡唯讀的互動數字，但從沒證實「真正的讚按鈕節點本身一定是
+//       clickable()」，萬一這個假設是錯的，會把所有真正的讚按鈕都濾掉，
+//       跟「完全用不了」的症狀完全吻合。v3.10 已經用「範圍內取最上面的
+//       大頭貼」從根本解決跳針的真正成因，不再需要這個篩選當防線。
+//   (2) textMatchesAnyHashtag() 讀不到 hashtags 對照表（HASHTAGS_CACHE 是
+//       null）時，v3.9 是回傳 false（當作沒比對到），代表 /hashtags 一旦
+//       讀取失敗，自動偵測會整個靜默失效、沒有任何提示。改成讀不到就直接
+//       放行（回傳 true），寧可暫時退回「每篇讚都觸發」這個已知能動的
+//       行為，也不要讓一個新加的過濾條件在失敗時把整個功能悄悄關掉——
+//       真的讀到對照表之後才會真的按關鍵字過濾，之後補上網路、下次輪詢
+//       就會自動恢復，不用重開腳本。
 // ============================================================
 
 // 注意：不要在檔案開頭加 "ui";——加了會讓這支腳本自己佔用一個空白 Activity，
@@ -492,19 +508,23 @@ threads.start(function () {
 // 讚按鈕的文字/描述模式，全檔共用同一份，不要各處各寫一次猜測的文字。
 var LIKE_BUTTON_PATTERN = /^(讚|Like|已按讚|取消讚|喜歡|已喜歡|取消喜歡|Liked|Unlike)$/;
 
-// 找畫面上目前「真正的」讚按鈕——只憑文字/描述比對（LIKE_BUTTON_PATTERN）
-// 不夠：引用貼文（quote tweet）卡片裡常常會顯示被引用貼文自己的互動數字
-// （❤️180 這種），那個「讚」字說明本身也會被 LIKE_BUTTON_PATTERN 比對到，
-// 但那顆節點只是唯讀的統計顯示，不是真的可以點的讚按鈕（實測抓到：畫面上
-// 同時混進一顆這種唯讀節點，讓 tweetIdentity()/likedSeen 在「真讚按鈕」跟
-// 「引用卡片的唯讀讚數」之間跳來跳去算出不同身分，就是「跳針」的根因之
-// 一）。加上 .clickable() 篩掉——真正的讚按鈕一定可以點，唯讀的統計顯示
-// 不行。watchLikes()、collectFromShareFlow() 都改用這個共用函式，不要各
-// 寫一次篩選邏輯。
+// 找畫面上目前的讚按鈕——單純用文字/描述比對（LIKE_BUTTON_PATTERN），
+// watchLikes()、collectFromShareFlow() 都改用這個共用函式，不要各寫一次。
+//
+// v3.9 曾經在這裡加過 .clickable() 篩選，理由是「引用卡片裡唯讀的互動
+// 數字（❤️180）也會被 LIKE_BUTTON_PATTERN 比對到，篩掉非真正可點擊的
+// 讚按鈕」——但這只是推測，沒有實機證據證明「真正的讚按鈕節點本身（不是
+// 外層容器）一定是 clickable()」，v3.10 上線後實測回報「完全用不了」，
+// 高度懷疑就是這個篩選條件剛好把真正的讚按鈕也濾掉了（Android 常見
+// pattern：可點擊範圍在外層容器，內層節點本身不一定算 clickable）。
+// 拿掉這個篩選——v3.10 已經改用「取範圍內最上面的大頭貼」從根本解決跳針
+// 的真正成因，不再依賴這裡濾掉唯讀節點；而且唯讀的互動數字顯示本來就不
+// 會帶「已按讚/取消讚」這類明確措辭（isLikedDesc() 認的是這個），單純
+// 混進 buttons 清單頂多讓 tweetIdentity() 偶爾算不出身分、印一行無傷大雅
+// 的診斷 log，不會真的誤觸發收集。用「拿掉一個沒證據支持、風險是讓核心
+// 偵測整個失效」換「保留一個從未證實必要、頂多多印幾行 log」的權衡，值得。
 function findLikeButtons() {
-  return descMatches(LIKE_BUTTON_PATTERN).find().filter(function (n) {
-    return n.clickable();
-  });
+  return descMatches(LIKE_BUTTON_PATTERN).find();
 }
 
 function isLikedDesc(desc) {
@@ -578,7 +598,7 @@ function loadHashtags() {
     HASHTAGS_CACHE = JSON.parse(res.body.string());
     log("已載入 hashtags 對照表，共 " + Object.keys(HASHTAGS_CACHE).length + " 個角色");
   } catch (e) {
-    log("讀取 /hashtags 失敗，自動偵測這關會先擋住全部貼文（不知道要比對什麼）：" + e);
+    log("讀取 /hashtags 失敗：" + e);
     HASHTAGS_CACHE = null;
   }
   return HASHTAGS_CACHE;
@@ -588,11 +608,21 @@ loadHashtags(); // 開機先拉一次快取起來，watchLikes() 每次輪詢都
 // 這段文字有沒有比對到 hashtags.json 裡任何一個角色的任何一個關鍵字——
 // 只回傳有沒有比對到，不需要知道比對到哪個角色，那是後端 submitCollect()
 // 自己重比對一次的事（這裡的比對結果只用來決定要不要觸發，不會影響最後
-// 送出的角色判斷）。讀不到對照表（HASHTAGS_CACHE 是 null）就保守地當作
-// 沒比對到，不要在不知道要比對什麼的情況下亂觸發。
+// 送出的角色判斷）。
+//
+// 讀不到對照表（HASHTAGS_CACHE 是 null，例如開機當下網路還沒連上、
+// BACKEND_URL 格式跟預期的不一樣）不能直接當「沒比對到」处理——v3.9 是
+// 這樣寫的，結果讀取一旦失敗，自動偵測就整個靜默失效、沒有任何提示，
+// 使用者只會看到「完全用不了」，猜不到是這裡在擋。改成讀不到就直接放行
+// （回傳 true，觸發整套流程，退回 v3.9 之前的行為：跑不出結果就跳手動
+// 輸入角色對話框）——寧可暫時退回「每篇讚都觸發」這個已知能動的行為，
+// 也不要讓一個新加的過濾條件在讀取失敗時把整個功能悄悄關掉。真的讀到
+// 對照表之後，這關才會真的按關鍵字過濾。每次呼叫都會嘗試重新載入（見
+// loadHashtags() 開頭的快取判斷），所以之後補上網路、下次輪詢就會自動
+// 恢復用關鍵字過濾，不用重開腳本。
 function textMatchesAnyHashtag(text) {
   var tags = loadHashtags();
-  if (!tags) return false;
+  if (!tags) return true;
   // 中文輸入法常把 # 自動轉全形「＃」，跟 likewatcher.user.js 一樣先正規化掉。
   var lower = (text || "").replace(/＃/g, "#").toLowerCase();
   return Object.keys(tags).some(function (name) {
