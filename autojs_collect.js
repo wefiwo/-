@@ -287,6 +287,17 @@
 //   去重不會真的重複送出，但會多佔用一次 collectLock 排隊時間，讓連續
 //   按讚時感覺要等更久）。改成 buttons 是空的那一輪直接跳過清理——空清單
 //   代表「這輪沒有可靠的畫面讀數」，不代表「貼文真的都不見了」。
+//
+// v3.14 更新：實測回報有一篇貼文（多圖，帶 #WutheringWaves #鳴潮）一直
+//   點讚/取消都沒反應，錄影逐幀比對確認：愛心數字真的有在 954/955 之間
+//   來回跳，但主控台整段期間連「讚按鈕算不出內容身分」這行診斷都沒印過
+//   ——這行只有 isLiked() 判斷為 true 但算不出身分時才會印，完全沒印代表
+//   isLiked() 從頭到尾都判斷成 false，不管這篇貼文實際按成什麼狀態。手動
+//   點「抓」按鈕測過，分享/複製連結/送出整條路都是通的，問題只卡在
+//   「有沒有按讚」這個狀態判斷本身。加上第三個訊號：selected()——跟
+//   checked() 是不同的無障礙旗標，Android 有些自訂 Toggle 元件（尤其
+//   圖示按鈕）用的是 isSelected() 不是 isChecked()，這篇貼文的讚按鈕
+//   很可能就是這種——checked()/文字描述都讀不出狀態，才需要多這道備援。
 // ============================================================
 
 // 注意：不要在檔案開頭加 "ui";——加了會讓這支腳本自己佔用一個空白 Activity，
@@ -577,9 +588,20 @@ function isLikedDesc(desc) {
   return /已按讚|取消讚|已喜歡|取消喜歡|Liked|Unlike/.test(desc || "");
 }
 
-// 判斷「已按讚」優先看 checked() 這個狀態旗標（無障礙服務裡對應網頁版空心/
-// 實心愛心切換的語意屬性，不受文字翻譯影響），旗標讀不到時才退回文字比對
-// 當備援——這也是之前「讚」vs「喜歡」翻譯不一致會漏判的根本解法。
+// 判斷「已按讚」依序看三個訊號，任一個判斷是「已按讚」就算數：
+//   1. checked() ——無障礙服務裡對應網頁版空心/實心愛心切換的語意屬性，
+//      不受文字翻譯影響。
+//   2. selected() ——跟 checked() 是不同的無障礙旗標，Android 有些自訂
+//      Toggle 元件（尤其圖示按鈕）用的是 isSelected() 不是 isChecked()。
+//      v3.14 實測抓到：有些貼文的讚按鈕不管 checked() 還是文字描述都讀不
+//      出「已讚」狀態（畫面上愛心數字明明有跳、log 卻整輪空白，連「算不
+//      出身分」這行診斷都沒印，代表 isLiked() 從頭到尾都判斷成 false）——
+//      手動「抓」按鈕測過，分享/送出整條路都是通的，唯獨這個狀態判斷
+//      對這類按鈕失靈，才加這個訊號當額外備援。
+//   3. isLikedDesc(desc) ——文字比對「已按讚/取消讚」這類明確措辭當最後
+//      備援（前兩個旗標都存在但永遠回傳 false 的話會蓋掉本來就有效的文字
+//      比對，導致整個偵測完全沒反應——這也是之前「讚」vs「喜歡」翻譯不
+//      一致會漏判的根本解法）。
 function isLiked(btn, desc) {
   var checkedState = false;
   try {
@@ -587,12 +609,17 @@ function isLiked(btn, desc) {
       checkedState = btn.checked();
     }
   } catch (e) {
-    // 有些節點沒有 checked 這個屬性，忽略即可，靠下面的文字比對
+    // 有些節點沒有 checked 這個屬性，忽略即可，靠下面的訊號
   }
-  // 兩個都檢查、任一個判斷是「已按讚」就算數——之前只信 checked()、
-  // checked() 存在但永遠回傳 false 的話會蓋掉本來就有效的文字比對，
-  // 導致整個偵測完全沒反應（實測就是這樣壞掉的）。
-  return checkedState || isLikedDesc(desc);
+  var selectedState = false;
+  try {
+    if (typeof btn.selected === "function") {
+      selectedState = btn.selected();
+    }
+  } catch (e) {
+    // 有些節點沒有 selected 這個屬性，忽略即可，靠其他訊號
+  }
+  return checkedState || selectedState || isLikedDesc(desc);
 }
 
 // 收集流程（操作畫面：點分享/開分享選單/複製連結）用的鎖——這段要序列化，
@@ -746,7 +773,8 @@ function watchLikes() {
       if (!textMatchesAnyHashtag(quickText)) {
         return;
       }
-      log("偵測到新的按讚，且對到關鍵字：" + id.slice(0, 40) + "…（checked=" + (typeof btn.checked === "function" ? btn.checked() : "n/a") + "）");
+      log("偵測到新的按讚，且對到關鍵字：" + id.slice(0, 40) + "…（checked=" + (typeof btn.checked === "function" ? btn.checked() : "n/a")
+        + "，selected=" + (typeof btn.selected === "function" ? btn.selected() : "n/a") + "）");
       // 收集流程丟到獨立執行緒跑，不要卡在這個 forEach 裡——不然這一輪
       // 偵測要等收集流程跑完（可能好幾秒、可能還在等你選類型/打角色）
       // 才能回到迴圈頂端繼續下一輪 POLL_MS，等於偵測被收集流程拖慢，
