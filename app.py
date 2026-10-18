@@ -45,10 +45,12 @@ OWNER_DISCORD_ID = os.environ.get("OWNER_DISCORD_ID", "")
 # 選填：設了才會在 client 主動要求時（見 /collect 的 announce 欄位）主動推播新收藏——兩個都設的話
 # 同一則會兩邊都發，只設一個就只發那邊，都不設就整個跳過。bot 要先被邀進對應伺服器、在該頻道有發言
 # 權限——User Install 不夠，這個一定要真的邀進去才行。
-ANNOUNCE_CHANNEL_IDS = [c for c in [
+# EXTRA_ANNOUNCE_CHANNEL_IDS 是逗號分隔的清單，之後再加頻道只要改 .env，不用動程式。
+ANNOUNCE_CHANNEL_IDS = [c.strip() for c in [
     os.environ.get("TEXT_ANNOUNCE_CHANNEL_ID", ""),
     os.environ.get("MARUNA_ANNOUNCE_CHANNEL_ID", ""),
-] if c]
+    *os.environ.get("EXTRA_ANNOUNCE_CHANNEL_IDS", "").split(","),
+] if c.strip()]
 
 APP_ID = os.environ.get("DISCORD_APPLICATION_ID") or requests.get(
     f"{API_BASE}/oauth2/applications/@me", headers={"Authorization": f"Bot {BOT_TOKEN}"}
