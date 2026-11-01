@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         抓圖 Bot - X/IG/FB 按讚自動蒐集
 // @namespace    ponytail
-// @version      6.0
-// @description  在 X、Instagram 或 Facebook 按讚符合角色 Hashtag 的貼文時，自動送去自己的 Discord 機器人後端收藏；X 上按讚的貼文只標了遊戲名（#鳴潮）沒標角色時，彈出輸入框手動指定角色；Alt+W 快捷鍵切換自動推播
+// @version      6.1
+// @description  在 X、Instagram 或 Facebook 按讚符合角色 Hashtag 的貼文時，自動送去自己的 Discord 機器人後端收藏；X 上轉推、或按讚的貼文只標了遊戲名（#鳴潮）沒標角色時，彈出輸入框手動指定角色；Alt+Q/Alt+W 快捷鍵切換本機開關
 // @match        https://x.com/*
 // @match        https://twitter.com/*
 // @match        https://www.instagram.com/*
@@ -92,21 +92,23 @@
     return isEnabled;
   }
 
-  // X 上按讚時，如果貼文只對到「鳴潮」這個總類別（沒有具體角色），會跳出選角色視窗，選完按確定
-  // 才收藏／推播；有對到具體角色的貼文照舊自動收藏。永遠開啟，沒有開關。
+  const retweetAddEnabled = registerToggleMenu("轉推手動收藏功能", "retweetAddEnabled");
+  // X 上按讚時，如果貼文只對到「鳴潮」這個總類別（沒有具體角色），會跳出跟轉推一樣的選角色視窗，
+  // 選完按確定才收藏／推播；有對到具體角色的貼文照舊自動收藏。永遠開啟，沒有開關。
   const GAME_CATEGORY = "鳴潮"; // hashtags.json 裡代表遊戲本身、而非某個角色的那個 key
   // announce 開了才會在 submitCollect 送出的請求裡多帶一個 announce 旗標，後端收到才會主動把這則
   // 貼文推播到指定的 Discord 頻道（要後端有設 ANNOUNCE_CHANNEL_ID 才有作用）。
   const announceEnabled = registerToggleMenu("自動推播到 Discord 頻道", "announceEnabled");
 
-  // 快捷鍵：Alt+W 切自動推播，不用開選單也能切換。輸入框/可編輯區域裡打字時不觸發，避免跟打字內容
-  // 衝突。
+  // 快捷鍵：Alt+Q 切轉推手動收藏、Alt+W 切自動推播，不用開選單也能切換。輸入框/可編輯區域裡打字時
+  // 不觸發，避免跟打字內容衝突。
   document.addEventListener("keydown", (ev) => {
     if (!ev.altKey || ev.ctrlKey || ev.metaKey || ev.shiftKey) return;
     const el = document.activeElement;
     if (el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable)) return;
     const key = ev.key.toLowerCase();
-    if (key === "w") { ev.preventDefault(); announceEnabled.toggle(); }
+    if (key === "q") { ev.preventDefault(); retweetAddEnabled.toggle(); }
+    else if (key === "w") { ev.preventDefault(); announceEnabled.toggle(); }
   });
 
   let hashtagsCache = null; // 角色 → Hashtag 對照表，每次載入頁面拉一次就好
@@ -371,9 +373,13 @@
       }, 500);
     }
 
-    // 選角色用的小視窗（按讚的貼文只對到 #鳴潮 時跳出，見下方 click handler）。選好的角色會被組成
-    // 「#第一個關鍵字」接在原文後面一起送給 /collect，借用後端既有的 hashtag 比對，不用另開 API。
-    // 輸入時即時打後端 /autocomplete（跟 Discord /抓圖 用同一套 autocomplete_matches
+    // 手動收藏：轉推當成「我確定要收藏這個」的手動觸發，跟讚那條自動判斷 hashtag 的路徑各自獨立、
+    // 互不影響——貼文沒下 hashtag 或關鍵字沒登記過也能收，直接自己指定要進哪個角色的收藏。
+    // 借用 /collect 既有的 hashtag 比對機制：把 text 組成每個角色「#第一個關鍵字」串起來一次送出
+    // 去，後端自然就會各自比對成功、一次存進所有指定角色，不用另外開一支後端 API、也不用送好幾次。
+    let pendingRetweetArticle = null;
+
+    // 選角色用的小視窗：輸入時即時打後端 /autocomplete（跟 Discord /抓圖 用同一套 autocomplete_matches
     // 同音字比對，不用在前端另外重刻一份拼音邏輯），選到的角色變成標籤，可以一次選多個再一起送出。
     function fetchAutocomplete(query, cb) {
       if (!query) return cb([]);
@@ -385,7 +391,7 @@
       });
     }
 
-    function pickCharacters(tags, cb, titleText) {
+    function pickCharacters(tags, cb, titleText = "轉推收藏——選角色（可選多個，支援同音字）") {
       const overlay = makeEl("div", "position:fixed;inset:0;z-index:2147483647;background:rgba(0,0,0,.5);"
         + "display:flex;align-items:center;justify-content:center;font:14px sans-serif;");
 
@@ -411,8 +417,8 @@
       box.append(title, chipRow, input, list, btnRow);
       overlay.append(box);
       document.body.append(overlay);
-      // 這個視窗是在按讚的同一個 click 事件裡跳出來的，X 自己的 SPA 常常會在事件處理完之後才把焦點
-      // 搶回去自己的畫面——同一輪呼叫的 focus() 會被蓋掉，delay 一下讓 X 先搶完再輪到我們。
+      // 這個視窗是在轉推確認選單關閉後的同一個 click 事件裡跳出來的，X 自己的 SPA 常常會在事件處理
+      // 完之後才把焦點搶回去自己的畫面——同一輪呼叫的 focus() 會被蓋掉，delay 一下讓 X 先搶完再輪到我們。
       setTimeout(() => input.focus(), 50);
 
       const picked = [];
@@ -477,9 +483,38 @@
       okBtn.onclick = () => { cleanup(); cb(picked); };
     }
 
+    function promptManualAdd(article, tags) {
+      const mediaType = detectMediaType(article);
+      if (!mediaType) return alert("這則貼文沒偵測到圖片或影片，無法加入收藏。");
+
+      const link = extractTweetLink(article);
+      if (!link) return alert("抓不到這則貼文的連結，無法加入收藏（選擇器可能要調整）。");
+
+      pickCharacters(tags, (names) => {
+        if (!names || !names.length) return;
+        const text = names.map((name) => `#${tags[name][0].replace(/^#/, "")}`).join(" ");
+        submitCollect("[抓圖收藏][轉推]", { url: link.url, author: link.author, text, mediaType, chars: names });
+      });
+    }
+
     document.addEventListener(
       "click",
       (ev) => {
+        if (retweetAddEnabled()) {
+          const retweetBtn = ev.target.closest('[data-testid="retweet"]');
+          if (retweetBtn) {
+            pendingRetweetArticle = retweetBtn.closest('article[data-testid="tweet"]');
+            return console.log("[抓圖收藏] 偵測到轉推按鈕，等確認轉推…");
+          }
+          const retweetConfirmBtn = ev.target.closest('[data-testid="retweetConfirm"]');
+          if (retweetConfirmBtn) {
+            const retweetArticle = pendingRetweetArticle;
+            pendingRetweetArticle = null;
+            if (!retweetArticle) return console.log("[抓圖收藏] 確認轉推了，但找不到是哪一則貼文（選擇器可能要調整）");
+            return loadHashtags((tags) => promptManualAdd(retweetArticle, tags));
+          }
+        }
+
         const likeBtn = ev.target.closest('[data-testid="like"]'); // 未按讚狀態的按鈕
         if (!likeBtn) return;
         const article = likeBtn.closest('article[data-testid="tweet"]');

@@ -47,7 +47,7 @@ pip install -r requirements.txt
 
 1. 瀏覽器裝 **Tampermonkey** 擴充功能（Chrome/Edge/Firefox 都有）。
 2. Tampermonkey 面板 → 建立新腳本，把 [likewatcher.user.js](likewatcher.user.js) 的內容整份貼進去存檔。
-3. 在 X/Instagram/Facebook 上第一次觸發（按讚）時，腳本會跳窗依序問**後端網址**跟 **`COLLECT_SECRET`**——本機測試填 `http://localhost:8787`（跟 `.env` 的 `COLLECT_SECRET` 一致；腳本是在你自己電腦的瀏覽器裡跑，直接打自己電腦的 Flask，不需要 ngrok，跟 Discord Interactions Endpoint 是兩件事）。這兩個值存在 Tampermonkey 自己的儲存空間，不是寫在腳本檔案裡，之後想改用 Tampermonkey 選單裡的「重新設定後端網址」/「重新設定 COLLECT_SECRET」。之後部署到 Render，記得把後端網址改成 Render 網址（見部署章節）。
+3. 在 X/Instagram/Facebook 上第一次觸發（按讚/轉推）時，腳本會跳窗依序問**後端網址**跟 **`COLLECT_SECRET`**——本機測試填 `http://localhost:8787`（跟 `.env` 的 `COLLECT_SECRET` 一致；腳本是在你自己電腦的瀏覽器裡跑，直接打自己電腦的 Flask，不需要 ngrok，跟 Discord Interactions Endpoint 是兩件事）。這兩個值存在 Tampermonkey 自己的儲存空間，不是寫在腳本檔案裡，之後想改用 Tampermonkey 選單裡的「重新設定後端網址」/「重新設定 COLLECT_SECRET」。之後部署到 Render，記得把後端網址改成 Render 網址（見部署章節）。
 
 ## 4. 註冊 Slash Command
 
