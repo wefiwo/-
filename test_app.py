@@ -539,6 +539,14 @@ class TestCollect(unittest.TestCase):
             "https://discord.com/api/v10/channels/222/messages",
         })
 
+    def test_announce_posts_to_webhook_url_without_bot_auth_header(self):
+        hook = "https://discord.com/api/webhooks/1/tok?thread_id=2"
+        with patch.object(app_module, "ANNOUNCE_CHANNEL_IDS", []), patch.object(app_module, "ANNOUNCE_WEBHOOK_URLS", [hook]), \
+                patch("app.requests.post") as mock_post:
+            app_module.post_announcement(["秧秧"], "photo", "https://x.com/a/status/12")
+        self.assertEqual(mock_post.call_args.args[0], hook)
+        self.assertEqual(mock_post.call_args.kwargs["headers"], {})
+
     def test_collect_without_announce_flag_never_posts(self):
         payload = {"url": "https://x.com/a/status/11", "author": "a", "type": "photo", "text": "#YangyangXuanling"}
         with patch.object(app_module, "ANNOUNCE_CHANNEL_IDS", ["111"]), patch("app.requests.post") as mock_post:
