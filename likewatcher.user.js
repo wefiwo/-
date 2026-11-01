@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         抓圖 Bot - X/IG/FB 按讚自動蒐集
 // @namespace    ponytail
-// @version      6.1
+// @version      6.2
 // @description  在 X、Instagram 或 Facebook 按讚符合角色 Hashtag 的貼文時，自動送去自己的 Discord 機器人後端收藏；X 上轉推、或按讚的貼文只標了遊戲名（#鳴潮）沒標角色時，彈出輸入框手動指定角色；Alt+Q/Alt+W 快捷鍵切換本機開關
 // @match        https://x.com/*
 // @match        https://twitter.com/*
@@ -158,11 +158,35 @@
         url: BACKEND_URL + "/collect",
         headers: { "Content-Type": "application/json", "X-Collect-Secret": secret },
         data: JSON.stringify({ url, author, text, type: mediaType, announce }),
-        onload: (res) => console.log(tag, chars, res.status, res.responseText),
+        onload: (res) => {
+          console.log(tag, chars, res.status, res.responseText);
+          try { relayToWebhook(tag, JSON.parse(res.responseText).announce_text); } catch (e) { /* 回應不是 JSON 就沒東西可轉發 */ }
+        },
         onerror: (e) => console.error(tag + " 送出失敗", e),
       });
     });
   }
+
+  // 後端回傳 announce_text（只有 announce 開著、且真的新增了才有）時，如果本機設了 Webhook 網址，就
+  // 從瀏覽器直接送過去。不讓後端送是因為 Discord 的 Cloudflare 會擋 PythonAnywhere 這類共用 IP 的
+  // Webhook 請求；從使用者自己的網路送不受影響。網址等於密鑰，所以跟 COLLECT_SECRET 一樣只存本機。
+  // 要發進討論串就在網址結尾加 ?thread_id=<討論串ID>。
+  function relayToWebhook(tag, text) {
+    const hook = GM_getValue("announceWebhookUrl", "");
+    if (!text || !hook) return;
+    GM_xmlhttpRequest({
+      method: "POST",
+      url: hook,
+      headers: { "Content-Type": "application/json" },
+      data: JSON.stringify({ content: text }),
+      onload: (res) => console.log(tag + " Webhook", res.status, res.status === 204 ? "" : res.responseText),
+      onerror: (e) => console.error(tag + " Webhook 送出失敗", e),
+    });
+  }
+  GM_registerMenuCommand("設定推播 Webhook 網址（選填）", () => {
+    const entered = prompt("貼上 Discord Webhook 網址（要發進討論串就在結尾加 ?thread_id=討論串ID；留空＝清除）：", GM_getValue("announceWebhookUrl", ""));
+    if (entered !== null) GM_setValue("announceWebhookUrl", entered.trim());
+  });
 
   // 三個平台都要「從點擊處往上爬找一個包住貼文連結的容器」「一堆候選連結裡挑第一個連續重複出現的當
   // 作者」「在容器裡找文字符合某些詞組的按鈕」——抽出來共用，不必三份幾乎一樣的迴圈。

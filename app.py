@@ -51,12 +51,8 @@ ANNOUNCE_CHANNEL_IDS = [c.strip() for c in [
     os.environ.get("MARUNA_ANNOUNCE_CHANNEL_ID", ""),
     *os.environ.get("EXTRA_ANNOUNCE_CHANNEL_IDS", "").split(","),
 ] if c.strip()]
-# 選填：Webhook 網址（逗號分隔）——只是伺服器成員、沒法邀 bot 進去時的替代方案，在該頻道建 Webhook
-# 需要「管理 Webhook」權限就好。要發進討論串的話，網址結尾加 ?thread_id=<討論串ID>。網址本身就是
-# 密鑰（知道的人都能往裡發訊息），只放 .env，別貼到公開的地方。
-ANNOUNCE_WEBHOOK_URLS = [u.strip() for u in os.environ.get("ANNOUNCE_WEBHOOK_URLS", "").split(",") if u.strip()]
 
-APP_ID =os.environ.get("DISCORD_APPLICATION_ID") or requests.get(
+APP_ID = os.environ.get("DISCORD_APPLICATION_ID") or requests.get(
     f"{API_BASE}/oauth2/applications/@me", headers={"Authorization": f"Bot {BOT_TOKEN}"}
 ).json()["id"]
 
@@ -539,31 +535,34 @@ def send_followups(token, messages):
             print(f"[followup] 送出失敗: {e}", flush=True)
 
 
+def announcement_content(characters, media_type, url):
+    media_label = "影片" if media_type == "video" else "圖片"
+    return f"**{'、'.join(characters)}** 的新{media_label}\n{build_link_lines(url)}"
+
+
 def post_announcement(characters, media_type, url):
     # flush=True: waitress/Render 預設會把 stdout 全緩衝，不強制 flush 的話這幾行可能久久不出現在
     # Render 的 Logs 分頁裡（不是沒印，是印了但還卡在緩衝區），害人以為程式碼根本沒跑到這裡。
-    if not ANNOUNCE_CHANNEL_IDS and not ANNOUNCE_WEBHOOK_URLS:
+    if not ANNOUNCE_CHANNEL_IDS:
         print("[announce] 沒設定任何推播頻道，略過", flush=True)
         return
-    media_label = "影片" if media_type == "video" else "圖片"
-    content = f"**{'、'.join(characters)}** 的新{media_label}\n{build_link_lines(url)}"
-    # (顯示用名稱, 請求網址, headers)——Webhook 網址本身帶密鑰，所以 log 只印編號不印網址。
-    targets = [(f"頻道 {c}", f"{API_BASE}/channels/{c}/messages", {"Authorization": f"Bot {BOT_TOKEN}"})
-               for c in ANNOUNCE_CHANNEL_IDS]
-    targets += [(f"Webhook #{i}", u, {}) for i, u in enumerate(ANNOUNCE_WEBHOOK_URLS, 1)]
-    for label, endpoint, headers in targets:
-        # 每個目標各自 try/except——其中一個 ID 錯或沒權限，不該連累另一個也發不出去。
+    content = announcement_content(characters, media_type, url)
+    for channel_id in ANNOUNCE_CHANNEL_IDS:
+        # 每個頻道各自 try/except——其中一個頻道 ID 錯或沒權限，不該連累另一個也發不出去。
         try:
-            r = requests.post(endpoint, headers=headers, json={"content": content}, timeout=10)
+            r = requests.post(
+                f"{API_BASE}/channels/{channel_id}/messages",
+                headers={"Authorization": f"Bot {BOT_TOKEN}"},
+                json={"content": content},
+                timeout=10,
+            )
             r.raise_for_status()
-            print(f"[announce] 已推播到{label}: {characters}", flush=True)
+            print(f"[announce] 已推播到頻道 {channel_id}: {characters}", flush=True)
         except requests.RequestException as e:
             # ponytail: best-effort push, swallow errors so a bot-permission/channel-id hiccup
             # never blocks /collect's actual job (saving the entry) — just log for debugging.
-            # str(e) 不能直接印：requests 的錯誤訊息會帶完整網址，Webhook 網址就會漏進 log。
             body = e.response.text if e.response is not None else ""
-            status = e.response.status_code if e.response is not None else type(e).__name__
-            print(f"[announce] 推播失敗（{label}）: {status} {body}", flush=True)
+            print(f"[announce] 推播失敗（頻道 {channel_id}）: {e} {body}", flush=True)
 
 
 def verify(req):
@@ -865,12 +864,16 @@ def collect():
             added.append(character)
     save_collected(data)
 
+    result = {"added_to": added}
     if added and body.get("announce"):
         # client-side opt-in flag (the userscript's own per-device toggle) — /collect itself
         # doesn't decide whether to announce, it just needs ANNOUNCE_CHANNEL_ID configured.
         post_announcement(added, media_type, url)
+        # 同一段文字也回給 client：Discord 的 Cloudflare 會擋 PythonAnywhere 這類共用 IP 打 Webhook，
+        # 所以 Webhook 目標改由 userscript 在使用者自己的瀏覽器送，後端只負責產生內容。
+        result["announce_text"] = announcement_content(added, media_type, url)
 
-    return jsonify({"added_to": added})
+    return jsonify(result)
 
 
 if __name__ == "__main__":

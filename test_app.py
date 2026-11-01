@@ -527,6 +527,15 @@ class TestCollect(unittest.TestCase):
         self.assertEqual(r.get_json()["added_to"], ["秧秧"])
         mock_post.assert_not_called()
 
+    def test_collect_announce_returns_text_for_client_side_webhook_relay(self):
+        payload = {"url": "https://x.com/a/status/13", "author": "a", "type": "photo", "text": "#YangyangXuanling", "announce": True}
+        r = self.client.post("/collect", json=payload, headers={"X-Collect-Secret": "test-secret"})
+        self.assertIn("秧秧", r.get_json()["announce_text"])
+        payload["url"] = "https://x.com/a/status/14"
+        del payload["announce"]
+        r = self.client.post("/collect", json=payload, headers={"X-Collect-Secret": "test-secret"})
+        self.assertNotIn("announce_text", r.get_json())
+
     def test_collect_announce_flag_posts_to_both_configured_channels(self):
         payload = {"url": "https://x.com/a/status/10", "author": "a", "type": "photo", "text": "#YangyangXuanling", "announce": True}
         with patch.object(app_module, "ANNOUNCE_CHANNEL_IDS", ["111", "222"]), patch("app.requests.post") as mock_post:
@@ -538,14 +547,6 @@ class TestCollect(unittest.TestCase):
             "https://discord.com/api/v10/channels/111/messages",
             "https://discord.com/api/v10/channels/222/messages",
         })
-
-    def test_announce_posts_to_webhook_url_without_bot_auth_header(self):
-        hook = "https://discord.com/api/webhooks/1/tok?thread_id=2"
-        with patch.object(app_module, "ANNOUNCE_CHANNEL_IDS", []), patch.object(app_module, "ANNOUNCE_WEBHOOK_URLS", [hook]), \
-                patch("app.requests.post") as mock_post:
-            app_module.post_announcement(["秧秧"], "photo", "https://x.com/a/status/12")
-        self.assertEqual(mock_post.call_args.args[0], hook)
-        self.assertEqual(mock_post.call_args.kwargs["headers"], {})
 
     def test_collect_without_announce_flag_never_posts(self):
         payload = {"url": "https://x.com/a/status/11", "author": "a", "type": "photo", "text": "#YangyangXuanling"}
