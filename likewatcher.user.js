@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         抓圖 Bot - X/IG/FB 按讚自動蒐集
 // @namespace    ponytail
-// @version      5.7
-// @description  在 X、Instagram 或 Facebook 按讚符合角色 Hashtag 的貼文時，自動送去自己的 Discord 機器人後端收藏；X 上轉推、或按讚的貼文只標了遊戲名（#鳴潮）沒標角色時，彈出輸入框手動指定角色；Alt+Q/Alt+W/Alt+E 快捷鍵切換本機開關
+// @version      5.8
+// @description  在 X、Instagram 或 Facebook 按讚符合角色 Hashtag 的貼文時，自動送去自己的 Discord 機器人後端收藏；X 上轉推、或按讚的貼文只標了遊戲名（#鳴潮）沒標角色時，彈出輸入框手動指定角色；Alt+Q/Alt+W 快捷鍵切換本機開關
 // @match        https://x.com/*
 // @match        https://twitter.com/*
 // @match        https://www.instagram.com/*
@@ -93,9 +93,8 @@
   }
 
   const retweetAddEnabled = registerToggleMenu("轉推手動收藏功能", "retweetAddEnabled");
-  // 開了之後 X 上按讚時，如果貼文只對到「鳴潮」這個總類別（沒有具體角色），會跳出跟轉推一樣的
-  // 選角色視窗，選完按確定才收藏／推播；有對到具體角色的貼文照舊自動收藏。
-  const likePickEnabled = registerToggleMenu("按讚只對到鳴潮時手動補角色（X）", "likePickEnabled");
+  // X 上按讚時，如果貼文只對到「鳴潮」這個總類別（沒有具體角色），會跳出跟轉推一樣的選角色視窗，
+  // 選完按確定才收藏／推播；有對到具體角色的貼文照舊自動收藏。永遠開啟，沒有開關。
   const GAME_CATEGORY = "鳴潮"; // hashtags.json 裡代表遊戲本身、而非某個角色的那個 key
   // announce 開了才會在 submitCollect 送出的請求裡多帶一個 announce 旗標，後端收到才會主動把這則
   // 貼文推播到指定的 Discord 頻道（要後端有設 ANNOUNCE_CHANNEL_ID 才有作用）。
@@ -110,7 +109,6 @@
     const key = ev.key.toLowerCase();
     if (key === "q") { ev.preventDefault(); retweetAddEnabled.toggle(); }
     else if (key === "w") { ev.preventDefault(); announceEnabled.toggle(); }
-    else if (key === "e") { ev.preventDefault(); likePickEnabled.toggle(); }
   });
 
   let hashtagsCache = null; // 角色 → Hashtag 對照表，每次載入頁面拉一次就好
@@ -536,7 +534,7 @@
             // 只對到遊戲本身的總類別（#鳴潮／#鸣潮／#명조／WutheringWaves…都歸在這一個 key 底下）、
             // 沒有任何具體角色——代表貼文有標遊戲但沒標角色，跳出選角色視窗讓人補。確定才收藏，
             // 取消／Esc 就整則略過（不會退回只存進「鳴潮」）。有對到具體角色就照舊自動收藏。
-            if (likePickEnabled() && chars.length === 1 && chars[0] === GAME_CATEGORY) {
+            if (chars.length === 1 && chars[0] === GAME_CATEGORY) {
               return pickCharacters(tags, (names) => {
                 if (!names || !names.length) return console.log("[抓圖收藏] 取消選角色，略過");
                 // 原文字留著（鳴潮那邊照樣對得到），再接上選的角色關鍵字，後端一次比對全部。
