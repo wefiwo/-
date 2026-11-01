@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         抓圖 Bot - X/IG/FB 按讚自動蒐集
 // @namespace    ponytail
-// @version      5.5
-// @description  在 X、Instagram 或 Facebook 按讚符合角色 Hashtag 的貼文時，自動送去自己的 Discord 機器人後端收藏；X 上轉推則彈出輸入框手動指定角色；Alt+Q/Alt+W 快捷鍵切換本機開關
+// @version      5.6
+// @description  在 X、Instagram 或 Facebook 按讚符合角色 Hashtag 的貼文時，自動送去自己的 Discord 機器人後端收藏；X 上轉推（或開啟「按讚手動指定角色」後的按讚）則彈出輸入框手動指定角色；Alt+Q/Alt+W/Alt+E 快捷鍵切換本機開關
 // @match        https://x.com/*
 // @match        https://twitter.com/*
 // @match        https://www.instagram.com/*
@@ -93,6 +93,8 @@
   }
 
   const retweetAddEnabled = registerToggleMenu("轉推手動收藏功能", "retweetAddEnabled");
+  // 開了之後 X 上按讚不再自動比對 hashtag，改跳出跟轉推一樣的選角色視窗，選完按確定才會收藏／推播。
+  const likePickEnabled = registerToggleMenu("按讚手動指定角色（X）", "likePickEnabled");
   // announce 開了才會在 submitCollect 送出的請求裡多帶一個 announce 旗標，後端收到才會主動把這則
   // 貼文推播到指定的 Discord 頻道（要後端有設 ANNOUNCE_CHANNEL_ID 才有作用）。
   const announceEnabled = registerToggleMenu("自動推播到 Discord 頻道", "announceEnabled");
@@ -106,6 +108,7 @@
     const key = ev.key.toLowerCase();
     if (key === "q") { ev.preventDefault(); retweetAddEnabled.toggle(); }
     else if (key === "w") { ev.preventDefault(); announceEnabled.toggle(); }
+    else if (key === "e") { ev.preventDefault(); likePickEnabled.toggle(); }
   });
 
   let hashtagsCache = null; // 角色 → Hashtag 對照表，每次載入頁面拉一次就好
@@ -388,13 +391,13 @@
       });
     }
 
-    function pickCharacters(tags, cb) {
+    function pickCharacters(tags, cb, titleText = "轉推收藏——選角色（可選多個，支援同音字）") {
       const overlay = makeEl("div", "position:fixed;inset:0;z-index:2147483647;background:rgba(0,0,0,.5);"
         + "display:flex;align-items:center;justify-content:center;font:14px sans-serif;");
 
       const box = makeEl("div", "background:#15202b;color:#fff;padding:16px;border-radius:10px;width:320px;"
         + "box-shadow:0 4px 20px rgba(0,0,0,.4);");
-      const title = makeEl("div", "margin-bottom:8px;font-weight:bold;", "轉推收藏——選角色（可選多個，支援同音字）");
+      const title = makeEl("div", "margin-bottom:8px;font-weight:bold;", titleText);
 
       const chipRow = makeEl("div", "display:flex;flex-wrap:wrap;gap:4px;margin-bottom:6px;min-height:24px;");
 
@@ -480,18 +483,22 @@
       okBtn.onclick = () => { cleanup(); cb(picked); };
     }
 
-    function promptManualAdd(article, tags) {
+    // silent: 按讚路徑用——純文字貼文本來就不收，不該每次按讚都跳 alert 打斷人；轉推是使用者
+    // 明確要收藏才觸發的，抓不到就該明講。
+    function promptManualAdd(article, tags, { tag = "[抓圖收藏][轉推]", title, silent = false } = {}) {
+      const fail = (msg) => (silent ? console.log("[抓圖收藏] " + msg) : alert(msg));
+
       const mediaType = detectMediaType(article);
-      if (!mediaType) return alert("這則貼文沒偵測到圖片或影片，無法加入收藏。");
+      if (!mediaType) return fail("這則貼文沒偵測到圖片或影片，無法加入收藏。");
 
       const link = extractTweetLink(article);
-      if (!link) return alert("抓不到這則貼文的連結，無法加入收藏（選擇器可能要調整）。");
+      if (!link) return fail("抓不到這則貼文的連結，無法加入收藏（選擇器可能要調整）。");
 
       pickCharacters(tags, (names) => {
         if (!names || !names.length) return;
         const text = names.map((name) => `#${tags[name][0].replace(/^#/, "")}`).join(" ");
-        submitCollect("[抓圖收藏][轉推]", { url: link.url, author: link.author, text, mediaType, chars: names });
-      });
+        submitCollect(tag, { url: link.url, author: link.author, text, mediaType, chars: names });
+      }, title);
     }
 
     document.addEventListener(
@@ -516,6 +523,12 @@
         if (!likeBtn) return;
         const article = likeBtn.closest('article[data-testid="tweet"]');
         if (!article) return;
+
+        if (likePickEnabled()) {
+          return loadHashtags((tags) => promptManualAdd(article, tags, {
+            tag: "[抓圖收藏][按讚]", title: "按讚收藏——選角色（確定後才會收藏，可選多個，支援同音字）", silent: true,
+          }));
+        }
 
         const mediaType = detectMediaType(article);
         if (!mediaType) return;
