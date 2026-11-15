@@ -97,6 +97,17 @@ class TestCollect(unittest.TestCase):
         hashtags = {"心": ["心"]}
         self.assertEqual(app_module.matched_characters("看 ＃心 的圖", hashtags, require_hash=True), ["心"])
 
+    def test_game_tag_lets_bare_character_names_match(self):
+        hashtags = {"鳴潮": ["#鳴潮", "WutheringWaves"], "熾霞": ["#熾霞", "#Chixia", "#しか"], "心": ["#心", "#Hsin"]}
+        m = app_module.matched_characters
+        # 帶遊戲 tag + 角色名字不帶 #：兩個都收（FB 也一樣）
+        self.assertEqual(m("#鳴潮 熾霞", hashtags), ["鳴潮", "熾霞"])
+        self.assertEqual(m("#WutheringWaves chixia", hashtags, require_hash=True), ["鳴潮", "熾霞"])
+        # 沒有遊戲 tag：#-only 規則照舊
+        self.assertEqual(m("熾霞", hashtags), [])
+        # 單字漢字、短假名就算有遊戲 tag 也不放寬（開心、楽しかった）
+        self.assertEqual(m("#鳴潮 好開心 楽しかった", hashtags), ["鳴潮"])
+
     def test_delete_entry_removes_matching_url(self):
         app_module.save_collected({"秧秧": [{"url": "https://x.com/a/status/1", "author": "a", "type": "photo"}]})
         self.assertTrue(app_module.delete_entry("秧秧", "https://x.com/a/status/1"))

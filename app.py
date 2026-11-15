@@ -125,6 +125,20 @@ HASHTAGS_PINYIN = build_pinyin_table(HASHTAGS)
 HASHTAGS_BOPOMOFO = build_bopomofo_table(HASHTAGS)
 
 
+# hashtags.json 裡代表遊戲本身、而非某個角色的那個 key。換其他作品的 fork 要改這裡
+# （likewatcher.user.js 的 GAME_CATEGORY 也要一起改）。
+GAME_CATEGORY = "鳴潮"
+
+
+def _bare_name_ok(kw):
+    # 貼文帶了遊戲 tag 時，角色名字不帶 # 也算——但只放寬 2 字以上的漢字跟 4 字母以上的英文。
+    # 單字漢字（心→開心）、假名/諺文短字串（しか→楽しかった、リリー→リリース、릴리→릴리즈）
+    # 就算有遊戲 tag 也太容易誤中，維持原本規則。
+    return (len(kw) >= 2 and all("一" <= c <= "鿿" for c in kw)) or (
+        len(kw) >= 4 and kw.isascii() and kw.isalpha()
+    )
+
+
 def matched_characters(text, hashtags, require_hash=False):
     # /collect 對 X/IG 貼文用寬鬆比對（關鍵字在文字裡出現就算），FB 則要求關鍵字必須以 #keyword
     # 的形式出現（見 app.py 頂端註解／CLAUDE.md 說明，plain-text 提到角色名字在 FB 上太常見）。
@@ -135,6 +149,10 @@ def matched_characters(text, hashtags, require_hash=False):
         raw = {name: [t for t in tags if f"#{t.lower().lstrip('#')}" in lower] for name, tags in hashtags.items()}
     else:
         raw = {name: [t for t in tags if t.lower() in lower] for name, tags in hashtags.items()}
+    if raw.get(GAME_CATEGORY):
+        for name, tags in hashtags.items():
+            if name != GAME_CATEGORY and not raw[name]:
+                raw[name] = [b for b in (t.lstrip("#") for t in tags) if _bare_name_ok(b) and b.lower() in lower]
     matched = {name: kws for name, kws in raw.items() if kws}
 
     # 同一篇貼文如果角色 A 的命中關鍵字整個是角色 B 的某個命中關鍵字的「真子字串」（不含完全相等），

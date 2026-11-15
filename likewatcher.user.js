@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         抓圖 Bot - X/IG/FB 按讚自動蒐集
 // @namespace    ponytail
-// @version      6.2
+// @version      6.3
 // @description  在 X、Instagram 或 Facebook 按讚符合角色 Hashtag 的貼文時，自動送去自己的 Discord 機器人後端收藏；X 上轉推、或按讚的貼文只標了遊戲名（#鳴潮）沒標角色時，彈出輸入框手動指定角色；Alt+Q/Alt+W 快捷鍵切換本機開關
 // @match        https://x.com/*
 // @match        https://twitter.com/*
@@ -137,12 +137,19 @@
   function matchedCharacters(text, tags, requireHash) {
     // 中文輸入法常把 # 自動轉全形「＃」，肉眼看是 hashtag，程式比對卻對不上半形 #，先正規化掉。
     const lower = text.replace(/＃/g, "#").toLowerCase();
+    const hit = (list) => list.some((h) => {
+      const keyword = requireHash ? "#" + h.replace(/^#/, "") : h;
+      return lower.includes(keyword.toLowerCase());
+    });
+    // 帶了遊戲 tag 時角色名字不帶 # 也算，放寬範圍跟後端 _bare_name_ok 一致。
+    const bareOk = (k) => /^[一-鿿]{2,}$/.test(k) || /^[A-Za-z]{4,}$/.test(k);
+    const gameHit = !!tags[GAME_CATEGORY] && hit(tags[GAME_CATEGORY]);
     return Object.entries(tags)
       .filter(([name]) => !name.startsWith("_"))
-      .filter(([, list]) => list.some((h) => {
-        const keyword = requireHash ? "#" + h.replace(/^#/, "") : h;
-        return lower.includes(keyword.toLowerCase());
-      }))
+      .filter(([name, list]) => hit(list) || (gameHit && name !== GAME_CATEGORY && list.some((h) => {
+        const bare = h.replace(/^#/, "");
+        return bareOk(bare) && lower.includes(bare.toLowerCase());
+      })))
       .map(([name]) => name);
   }
 
