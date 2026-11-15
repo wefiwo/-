@@ -108,6 +108,13 @@ class TestCollect(unittest.TestCase):
         # 單字漢字、短假名就算有遊戲 tag 也不放寬（開心、楽しかった）
         self.assertEqual(m("#鳴潮 好開心 楽しかった", hashtags), ["鳴潮"])
 
+    def test_game_character_match_also_files_under_game(self):
+        hashtags = {"鳴潮": ["#鳴潮"], "清宵": ["清宵"], "ときのそら": ["ときのそら"]}
+        m = app_module.matched_characters
+        self.assertEqual(m("清宵好可愛", hashtags), ["鳴潮", "清宵"])
+        # 界線之後（Hololive）的角色不屬於鳴潮，不會被順手加進去
+        self.assertEqual(m("ときのそら", hashtags), ["ときのそら"])
+
     def test_delete_entry_removes_matching_url(self):
         app_module.save_collected({"秧秧": [{"url": "https://x.com/a/status/1", "author": "a", "type": "photo"}]})
         self.assertTrue(app_module.delete_entry("秧秧", "https://x.com/a/status/1"))

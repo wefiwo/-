@@ -128,6 +128,14 @@ HASHTAGS_BOPOMOFO = build_bopomofo_table(HASHTAGS)
 # hashtags.json 裡代表遊戲本身、而非某個角色的那個 key。換其他作品的 fork 要改這裡
 # （likewatcher.user.js 的 GAME_CATEGORY 也要一起改）。
 GAME_CATEGORY = "鳴潮"
+# hashtags.json 裡這個 key 之前都是 GAME_CATEGORY 的角色，從它開始是別的作品（Hololive）。
+# add_simplified_keywords.py 的 STOP_AT 用的是同一條界線，改的話兩邊一起改。
+GAME_BLOCK_END = "ときのそら"
+
+
+def game_members(hashtags):
+    names = list(hashtags)
+    return set(names[:names.index(GAME_BLOCK_END)] if GAME_BLOCK_END in names else names) - {GAME_CATEGORY}
 
 
 def _bare_name_ok(kw):
@@ -164,7 +172,11 @@ def matched_characters(text, hashtags, require_hash=False):
         other_kws = [kw.lower() for other, kws in matched.items() if other != name for kw in kws]
         return any(kw in other_kw and kw != other_kw for kw in own_kws for other_kw in other_kws)
 
-    return [name for name in matched if not shadowed_by_a_more_specific_match(name)]
+    result = [name for name in matched if not shadowed_by_a_more_specific_match(name)]
+    # 收到鳴潮角色的貼文一律也收進鳴潮本身，就算貼文沒帶 #鳴潮。
+    if GAME_CATEGORY in hashtags and GAME_CATEGORY not in result and game_members(hashtags) & set(result):
+        result.insert(0, GAME_CATEGORY)
+    return result
 
 
 def _contains_syllables(needle, haystack):
