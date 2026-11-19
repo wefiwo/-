@@ -101,6 +101,14 @@ GITHUB_BACKUP_PATH = os.environ.get("GITHUB_BACKUP_PATH", "collected_backup.json
 with open(HASHTAGS_PATH, encoding="utf-8") as f:
     HASHTAGS = {k: (v if isinstance(v, list) else [v]) for k, v in json.load(f).items() if not k.startswith("_")}
 
+# 角色 → 綽號清單，只給自動完成用（打「鞭子」就跳出格爾黛）。刻意跟 hashtags.json 分開：
+# 綽號是外觀描述詞，拿去比對貼文會大量誤收。檔案不存在就當沒有綽號。
+NICKNAMES_PATH = Path(__file__).parent / "nicknames.json"
+NICKNAMES = {}
+if NICKNAMES_PATH.exists():
+    with open(NICKNAMES_PATH, encoding="utf-8") as f:
+        NICKNAMES = {k: v for k, v in json.load(f).items() if not k.startswith("_")}
+
 # 拼音/注音查一次存起來，同音字（碎/歲/穗都唸 sui，聲調也一樣）autocomplete 才找得到，不用每次打字
 # 都重轉換——build_pinyin_table/build_bopomofo_table 也是 test_app.py 重建這兩張表時共用的那份，
 # 兩邊各寫一份會不小心不同步。
@@ -191,7 +199,13 @@ def autocomplete_matches(query):
         if query in name
         or (query_syllables and _contains_syllables(query_syllables, HASHTAGS_PINYIN[name]))
         or (query_bopomofo and query_bopomofo in HASHTAGS_BOPOMOFO[name])
+        or any(query.lower() in nick.lower() for nick in NICKNAMES.get(name, []))
     ][:25]
+
+
+def choice_label(name):
+    nicks = NICKNAMES.get(name)
+    return f"{name}（{'、'.join(nicks)}）"[:100] if nicks else name
 
 
 def load_collected():
@@ -619,7 +633,7 @@ def interactions():
         if focused["name"] == "網址":
             choices = url_choices(opts.get("角色", ""), focused["value"].strip())
         else:
-            choices = [{"name": n, "value": n} for n in autocomplete_matches(focused["value"].strip())]
+            choices = [{"name": choice_label(n), "value": n} for n in autocomplete_matches(focused["value"].strip())]
         return jsonify({"type": 8, "data": {"choices": choices}})
 
     if itype == 3:  # message component (button) clicked

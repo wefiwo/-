@@ -108,6 +108,15 @@ class TestCollect(unittest.TestCase):
         # 單字漢字、短假名就算有遊戲 tag 也不放寬（開心、楽しかった）
         self.assertEqual(m("#鳴潮 好開心 楽しかった", hashtags), ["鳴潮"])
 
+    def test_autocomplete_matches_nicknames(self):
+        with patch.object(app_module, "NICKNAMES", {"秧秧": ["風箏", "UFO"]}):
+            self.assertIn("秧秧", app_module.autocomplete_matches("風"))
+            self.assertIn("秧秧", app_module.autocomplete_matches("ufo"))
+            self.assertEqual(app_module.choice_label("秧秧"), "秧秧（風箏、UFO）")
+            self.assertEqual(app_module.choice_label("長離"), "長離")
+        # 綽號只影響自動完成，不能變成比對貼文的關鍵字
+        self.assertEqual(app_module.matched_characters("今天放風箏", {"秧秧": ["秧秧"]}), [])
+
     def test_game_character_match_also_files_under_game(self):
         hashtags = {"鳴潮": ["#鳴潮"], "清宵": ["清宵"], "ときのそら": ["ときのそら"]}
         m = app_module.matched_characters
